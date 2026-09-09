@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    // Node 20 + ESM. "nodenext" makes TypeScript resolve imports the same way Node does
+    // at runtime — which is why relative imports below carry a .js extension even though
+    // the files on disk are .ts. See the note in README/CLAUDE.md; it trips up everyone once.
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "target": "es2022",
+    "lib": ["es2023"],
+
+    "outDir": "dist",
+    "rootDir": "src",
+
+    // Strict from day one. Loosening later is easy; retrofitting strictness is not.
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "sourceMap": true,
+    "declaration": false
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

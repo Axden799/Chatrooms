@@ -1,0 +1,54 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Chatrooms — slice 1 test client</title>
+<style>
+  body { font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; max-width: 46rem; margin: 2rem auto; padding: 0 1rem; }
+  #log { border: 1px solid #ccc; border-radius: 6px; height: 22rem; overflow-y: auto; padding: .75rem; white-space: pre-wrap; }
+  .row { display: flex; gap: .5rem; margin-top: .75rem; }
+  input { flex: 1; padding: .5rem; font: inherit; }
+  button { padding: .5rem 1rem; font: inherit; cursor: pointer; }
+  .sent { color: #0a7; } .recv { color: #06c; } .sys { color: #888; } .err { color: #c00; }
+</style>
+
+<h1>slice 1 test client</h1>
+<p class="sys">
+  Raw browser WebSocket — no client library. This works precisely because we chose
+  <code>ws</code> over Socket.IO; a Socket.IO server could not be driven from this page.
+</p>
+
+<div id="log"></div>
+<div class="row">
+  <input id="body" placeholder="message body" value="hello world" />
+  <button id="send">Send</button>
+</div>
+<p class="sys">
+  senderId <input id="sender" size="26" value="000000000000000000000001" />
+  chatId <input id="chat" size="26" value="0000000000000000000000ff" />
+</p>
+
+<script>
+  const log = (msg, cls = "sys") => {
+    const el = document.createElement("div");
+    el.className = cls;
+    el.textContent = `${new Date().toLocaleTimeString()}  ${msg}`;
+    document.getElementById("log").append(el);
+    el.scrollIntoView();
+  };
+
+  const ws = new WebSocket("ws://localhost:8080");
+  ws.onopen = () => log("connected", "sys");
+  ws.onclose = () => log("disconnected", "sys");
+  ws.onerror = () => log("socket error — is the server running?", "err");
+  ws.onmessage = (e) => log(`recv  ${e.data}`, "recv");
+
+  document.getElementById("send").onclick = () => {
+    if (ws.readyState !== WebSocket.OPEN) return log("not connected", "err");
+    const payload = {
+      chatId: document.getElementById("chat").value,
+      senderId: document.getElementById("sender").value,
+      body: document.getElementById("body").value,
+    };
+    ws.send(JSON.stringify(payload));
+    log(`sent  ${JSON.stringify(payload)}`, "sent");
+  };
+</script>

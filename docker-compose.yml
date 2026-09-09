@@ -1,0 +1,38 @@
+# Local infrastructure only — the Node app runs on the host via `npm run dev`.
+# Keeping the app out of compose for now means no image rebuild on every code change.
+#
+#   docker compose up -d      start mongo + redis
+#   docker compose down       stop them (data survives in the named volumes)
+#   docker compose down -v    stop and wipe the data
+services:
+  mongo:
+    image: mongo:7
+    container_name: chatrooms-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Not used until the pub/sub slice — running it now so the stack is stable
+  # and slice 3 doesn't start with an infra change.
+  redis:
+    image: redis:7-alpine
+    container_name: chatrooms-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  mongo-data:
+  redis-data:
