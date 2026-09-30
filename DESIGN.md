@@ -136,6 +136,15 @@ he keeps the learning, not just that code ships.
    genuinely new part — and nothing more. A fuller login reuses api_project ground and adds
    no new learning.
 
+## Deferred work — pick up before calling v1 done
+
+Things consciously postponed to keep a slice thin. Each is a real gap, not a cut.
+
+| # | Item | Deferred at | Why it was deferred | What it needs |
+|---|---|---|---|---|
+| 1 | **Real `User` records + login** | slice 2 (2026-09-09) | Slice 2 is about the connection registry and routing. A `User` model plus a `POST /login` endpoint would force restructuring the server to serve HTTP and WebSocket on one port (`http.createServer` + `WebSocketServer({ server })`) — real work, orthogonal to what the slice teaches. | `models/User.ts` (username → userId + token), an HTTP login endpoint, and a token check in the WS handshake. Structural win is already in place: `senderId` comes from the connection, not the payload — so this only touches the handshake. |
+| 2 | **Token verification on the handshake** | slice 2 (2026-09-09) | Follows item 1 — without `User` records there is no token to verify. Today any client may claim any `userId` in the query string. | Verify the token at the upgrade request; close with code 1008 on failure. **Note:** `ws` fires `connection` only AFTER the 101 handshake is already sent, so `socket.close(1008)` there is a post-handshake close — the client observes `open` then immediately `close`. To reject before the 101, use the `verifyClient` option or handle the server's raw `upgrade` event. Fine for slice 2; do it properly when the token check lands. |
+
 ## Suggested first vertical slice (to propose after the two decisions)
 The thinnest end-to-end thread: **one client connects over a WebSocket, sends a message,
 the server timestamps + persists it to Mongo and echoes it back.** No pub/sub, no inbox, no

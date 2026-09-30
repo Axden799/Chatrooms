@@ -1,0 +1,13 @@
+{
+  // Build-only config: compiles src/ to dist/. Tests and vitest.config.ts are typechecked
+  // by the base tsconfig (npm run typecheck) but must never reach the build output.
+  // outDir/rootDir live HERE rather than in the base config, because rootDir:"src" would
+  // reject tests/ from the typecheck program entirely.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist", "tests", "src/scripts"]
+}
