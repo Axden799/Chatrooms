@@ -54,7 +54,9 @@ https://www.hellointerview.com/learn/system-design/problem-breakdowns/whatsapp
 
 ## Commands
 
-Node is lazy-loaded via nvm, so a non-interactive shell needs `source ~/.nvm/nvm.sh` first.
+**Node 24** (Krypton LTS), pinned in `.nvmrc` + `engines`. Node is lazy-loaded via nvm, so
+a non-interactive shell needs `source ~/.nvm/nvm.sh && nvm use 24` first — a bare shell gets
+the Homebrew Node 21 (never an LTS) instead, which is the wrong runtime.
 Full instructions and a troubleshooting table live in `README.md`.
 
 ```bash

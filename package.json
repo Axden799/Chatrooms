@@ -4,6 +4,9 @@
   "private": true,
   "description": "Real-time group chat backend — WebSockets + Redis Pub/Sub + MongoDB",
   "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",

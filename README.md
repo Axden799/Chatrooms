@@ -5,10 +5,14 @@ See `DESIGN.md` for scope and architecture decisions.
 
 ## Prerequisites
 
-- **Node** — lazy-loaded via nvm on this machine, so every new shell needs:
+- **Node 24** (Krypton LTS), pinned in `.nvmrc` and enforced by `engines` in
+  `package.json`. Node is lazy-loaded via nvm on this machine, so every new shell needs:
   ```bash
-  source ~/.nvm/nvm.sh
+  load_nvm      # or: source ~/.nvm/nvm.sh
+  nvm use       # reads .nvmrc
   ```
+  Note a Homebrew Node (v21, never an LTS) is also installed and is what a bare shell
+  gets. Always `nvm use` in this directory so you are on 24.
 - **Colima** — this machine uses Colima (free, open-source), NOT Docker Desktop. It runs a
   Linux VM that provides the Docker daemon; the standard `docker` / `docker compose` CLIs
   then work unchanged against it.
