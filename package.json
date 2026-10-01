@@ -8,7 +8,8 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "peek": "docker exec chatrooms-mongo mongosh chatrooms --quiet --eval 'db.messages.find().sort({serverTimestamp:-1}).forEach(d => print(d.serverTimestamp.toISOString() + \"  \" + d.senderId + \"  \" + d.body))'"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

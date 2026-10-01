@@ -78,6 +78,7 @@ The collection is `messages` — Mongoose lowercases and pluralizes the model na
 | `npm run typecheck` | types only, no build — fastest feedback loop |
 | `npm run build` | compile TS to `dist/` |
 | `npm start` | run the compiled build |
+| `npm run peek` | print stored messages, newest first (sender + body) |
 | `docker compose up -d` | start Mongo + Redis |
 | `docker compose down` | stop them (data survives) |
 | `docker compose down -v` | stop and **wipe** the data |

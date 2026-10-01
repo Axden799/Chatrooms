@@ -1,32 +1,43 @@
 <!doctype html>
 <meta charset="utf-8" />
-<title>Chatrooms — slice 1 test client</title>
+<title>Chatrooms — slice 2 test client</title>
 <style>
   body { font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; max-width: 46rem; margin: 2rem auto; padding: 0 1rem; }
-  #log { border: 1px solid #ccc; border-radius: 6px; height: 22rem; overflow-y: auto; padding: .75rem; white-space: pre-wrap; }
-  .row { display: flex; gap: .5rem; margin-top: .75rem; }
-  input { flex: 1; padding: .5rem; font: inherit; }
+  #log { border: 1px solid #ccc; border-radius: 6px; height: 20rem; overflow-y: auto; padding: .75rem; white-space: pre-wrap; }
+  .row { display: flex; gap: .5rem; margin-top: .75rem; align-items: center; }
+  input { padding: .5rem; font: inherit; flex: 1; }
   button { padding: .5rem 1rem; font: inherit; cursor: pointer; }
+  label { color: #666; min-width: 5.5rem; }
   .sent { color: #0a7; } .recv { color: #06c; } .sys { color: #888; } .err { color: #c00; }
 </style>
 
-<h1>slice 1 test client</h1>
+<h1>slice 2 test client</h1>
 <p class="sys">
-  Raw browser WebSocket — no client library. This works precisely because we chose
-  <code>ws</code> over Socket.IO; a Socket.IO server could not be driven from this page.
+  The userId now travels in the connection URL, not in the message. Click Connect,
+  then Send. The server decides who you are from the handshake.
 </p>
 
-<div id="log"></div>
 <div class="row">
-  <input id="body" placeholder="message body" value="hello world" />
-  <button id="send">Send</button>
+  <label>userId</label>
+  <input id="user" value="000000000000000000000001" />
+  <button id="connect">Connect</button>
+</div>
+
+<div class="row"><div id="log" style="flex:1"></div></div>
+
+<div class="row">
+  <label>message</label>
+  <input id="body" value="hello world" />
+  <button id="send" disabled>Send</button>
 </div>
 <p class="sys">
-  senderId <input id="sender" size="26" value="000000000000000000000001" />
-  chatId <input id="chat" size="26" value="0000000000000000000000ff" />
+  chatId <input id="chat" value="0000000000000000000000ff" style="flex:none; width:16rem" />
+  &nbsp; <label style="min-width:0"><input type="checkbox" id="spoof" style="flex:none" /> try to spoof senderId</label>
 </p>
 
 <script>
+  let ws = null;
+
   const log = (msg, cls = "sys") => {
     const el = document.createElement("div");
     el.className = cls;
@@ -35,19 +46,46 @@
     el.scrollIntoView();
   };
 
-  const ws = new WebSocket("ws://localhost:8080");
-  ws.onopen = () => log("connected", "sys");
-  ws.onclose = () => log("disconnected", "sys");
-  ws.onerror = () => log("socket error — is the server running?", "err");
-  ws.onmessage = (e) => log(`recv  ${e.data}`, "recv");
+  document.getElementById("connect").onclick = () => {
+    const userId = document.getElementById("user").value.trim();
+    if (!userId) return log("enter a userId first", "err");
+
+    if (ws) ws.close();
+
+    // Identity goes in the query string of the UPGRADE REQUEST — the one moment
+    // this connection is still HTTP. Note the scheme is ws://, not http://.
+    ws = new WebSocket(`ws://localhost:8080/?userId=${encodeURIComponent(userId)}`);
+
+    ws.onopen = () => {
+      log(`connected as ${userId}`, "sys");
+      document.getElementById("send").disabled = false;
+    };
+    ws.onclose = (e) => {
+      // The server closes with 1008 when the userId is missing or malformed.
+      log(`disconnected${e.reason ? " — " + e.reason : ""} (code ${e.code})`,
+          e.code === 1008 ? "err" : "sys");
+      document.getElementById("send").disabled = true;
+    };
+    ws.onerror = () => log("socket error — is the server running?", "err");
+    ws.onmessage = (e) => log(`recv  ${e.data}`, "recv");
+  };
 
   document.getElementById("send").onclick = () => {
-    if (ws.readyState !== WebSocket.OPEN) return log("not connected", "err");
+    if (!ws || ws.readyState !== WebSocket.OPEN) return log("not connected", "err");
+
+    // No senderId — the server knows who we are from the handshake.
     const payload = {
-      chatId: document.getElementById("chat").value,
-      senderId: document.getElementById("sender").value,
+      chatId: document.getElementById("chat").value.trim(),
       body: document.getElementById("body").value,
     };
+
+    // Tick the spoof box to deliberately lie about who you are. The server must
+    // ignore this and store the handshake id instead.
+    if (document.getElementById("spoof").checked) {
+      payload.senderId = "0000000000000000000000ee";
+      log("spoofing senderId as 0000000000000000000000ee", "err");
+    }
+
     ws.send(JSON.stringify(payload));
     log(`sent  ${JSON.stringify(payload)}`, "sent");
   };

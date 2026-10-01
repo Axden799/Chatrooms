@@ -1,22 +1,37 @@
 import { WebSocketServer } from "ws";
+import type { IncomingMessage } from "node:http";
+import { Types } from "mongoose";
 import { config } from "./config.js";
 import { connectToMongo, disconnectFromMongo } from "./db.js";
 import { MessageModel } from "./models/Message.js";
 
 /**
- * SLICE 1 — the thinnest end-to-end thread.
+ * SLICE 2 — identity comes from the connection, not the message body.
  *
- * Goal: one client connects over a WebSocket, sends a message, the server stamps it
- * with a server timestamp, persists it to Mongo, and echoes it back.
+ * Slice 1 trusted `senderId` from the payload, so any client could claim to be
+ * anyone. Now the server reads the user's id off the WebSocket handshake and uses
+ * that instead, ignoring whatever the client asserts.
  *
- * NOT in this slice: pub/sub, inbox, presence, auth, groups. Resist adding them.
- * The only thing being proven here is that the Node + TS + ws + Mongo toolchain
- * works end to end.
- *
- * ---------------------------------------------------------------------------
- * YOUR PART starts at the TODO below. Everything above and below it is plumbing.
- * ---------------------------------------------------------------------------
+ * NOT in this slice: routing to other users, a Chat model, presence, pub/sub.
+ * Messages still echo only back to the sender.
  */
+
+/**
+ * Pull `?userId=...` off the handshake. Returns null if absent or malformed.
+ *
+ * `req` is the HTTP GET that opened this connection — the one moment a URL and
+ * headers exist. After the server answers 101 Switching Protocols there are only
+ * frames, with nowhere to put metadata. So identity must be read here.
+ *
+ * The throwaway base URL is needed because `req.url` is a relative path
+ * ("/?userId=abc") and the URL constructor requires an absolute one.
+ */
+function readUserId(req: IncomingMessage): Types.ObjectId | null {
+  const url = new URL(req.url ?? "/", "http://placeholder");
+  const raw = url.searchParams.get("userId");
+  if (!raw || !Types.ObjectId.isValid(raw)) return null;
+  return new Types.ObjectId(raw);
+}
 
 async function main(): Promise<void> {
   await connectToMongo();
@@ -24,82 +39,72 @@ async function main(): Promise<void> {
   const wss = new WebSocketServer({ port: config.port });
   console.log(`[ws] listening on ws://localhost:${config.port}`);
 
-  // "connection" fires ONCE each time a client connects. `socket` is that one
-  // client's connection — five users online means this ran five times and you have
-  // five separate sockets, each with its own handlers registered below.
-  wss.on("connection", (socket) => {
-    console.log("[ws] client connected");
+  // ---- EDIT 1 -------------------------------------------------------------
+  // Add a second parameter, `req`, to this handler. `ws` has always passed it;
+  // slice 1 just ignored it. Type it as IncomingMessage:
+  //
+  //     wss.on("connection", (socket, req: IncomingMessage) => {
+  // -------------------------------------------------------------------------
+  wss.on("connection", (socket, req: IncomingMessage) => {
+    // ---- EDIT 2 -----------------------------------------------------------
+    // Read the identity, and refuse the connection if there isn't one.
+    //
+    //   1. const userId = readUserId(req);
+    //   2. if (!userId) { close the socket and return }
+    //
+    // For step 2, close with code 1008 (Policy Violation) and a reason string —
+    // same two-argument shape as any other close:
+    //     socket.close(1008, "a valid userId query parameter is required");
+    // The bare `return` matters: without it the handler keeps going and
+    // registers handlers on a socket that is already closing.
+    //
+    // Then log who arrived, so you can see it working:
+    //     console.log(`[ws] connected: ${userId.toString()}`);
+    //
+    // YOUR CODE:
 
-    // Note this is `async` — you need `await` for the database call inside.
+    const userId = readUserId(req);
+    if (!userId) { 
+      socket.close(1008, "a valid userId query parameter is required");
+      return;
+    }
+
+    console.log(`[ws] connected: ${userId.toString()}`)
+
+    // -----------------------------------------------------------------------
+
     socket.on("message", async (raw) => {
       try {
-        // ---- STEP 1 -----------------------------------------------------
-        // `raw` is a Buffer (Node's `bytes`). Two conversions to get an object:
-        //   raw.toString()  → string   (bytes.decode())
-        //   JSON.parse(...) → object   (json.loads())
-        // Declare a const holding the parsed object. Call it `data`.
-        //
-        // YOUR CODE:
         const data = JSON.parse(raw.toString());
 
-
-        // ---- STEP 2 -----------------------------------------------------
-        // Persist it. `MessageModel.create()` returns a Promise, so `await` it
-        // and store the result — the returned document is what you echo back,
-        // because it has the _id Mongo assigned.
+        // ---- EDIT 3 ---------------------------------------------------
+        // Change senderId below from `data.senderId` to `userId`.
         //
-        //   const saved = await MessageModel.create({
-        //     chatId:   ...,      // from data
-        //     senderId: ...,      // from data
-        //     body:     ...,      // from data
-        //     serverTimestamp: new Date(),   // ← from the SERVER, never from data
-        //   });
-        //
-        // That last field is the whole ordering guarantee. If you trust the
-        // client's clock, two clients disagree and your message order is wrong.
-        // One authoritative clock is what makes ordering trivially correct —
-        // it's the SIMPLIFY in DESIGN.md that replaces NTP-synced clocks.
-        //
-        // YOUR CODE:
+        // One line, and it is the whole point of the slice: the sender is
+        // now whoever owns this connection, not whoever the payload claims.
+        // ---------------------------------------------------------------
         const saved = await MessageModel.create({
           chatId: data.chatId,
-          senderId: data.senderId,
+          senderId: userId,
           body: data.body,
           serverTimestamp: new Date(),
         });
 
-
-        // ---- STEP 3 -----------------------------------------------------
-        // Echo the saved document back to this client.
-        // `socket.send()` takes a STRING — pass it an object and the client
-        // receives the literal text "[object Object]".
-        // So wrap it: JSON.stringify(saved)   (json.dumps())
-        //
-        // YOUR CODE:
-        socket.send(JSON.stringify(saved))
-
-
+        socket.send(JSON.stringify(saved));
       } catch (err) {
-        // A malformed frame from any client must not kill the server. In Node an
-        // uncaught throw inside an event handler takes down the whole process —
-        // there's no per-request isolation like a Flask view gives you.
         console.error("[ws] failed to handle message:", err);
       }
     });
 
-    // Separate registration, not an else-branch. Fires when this client leaves.
-    // Presence bookkeeping will live here in a later slice.
     socket.on("close", () => {
       console.log("[ws] client disconnected");
     });
 
-    // An unhandled "error" event is another way to crash the process.
     socket.on("error", (err) => {
       console.error("[ws] socket error:", err);
     });
   });
 
-  // Ctrl-C should close the DB pool rather than yanking the process.
   const shutdown = async (): Promise<void> => {
     console.log("\n[app] shutting down");
     wss.close();
