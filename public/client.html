@@ -1,6 +1,6 @@
 <!doctype html>
 <meta charset="utf-8" />
-<title>Chatrooms — slice 2 test client</title>
+<title>Chatrooms — slice 3 test client</title>
 <style>
   body { font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; max-width: 46rem; margin: 2rem auto; padding: 0 1rem; }
   #log { border: 1px solid #ccc; border-radius: 6px; height: 20rem; overflow-y: auto; padding: .75rem; white-space: pre-wrap; }
@@ -11,10 +11,10 @@
   .sent { color: #0a7; } .recv { color: #06c; } .sys { color: #888; } .err { color: #c00; }
 </style>
 
-<h1>slice 2 test client</h1>
+<h1>slice 3 test client</h1>
 <p class="sys">
-  The userId now travels in the connection URL, not in the message. Click Connect,
-  then Send. The server decides who you are from the handshake.
+  Open this file in TWO tabs with DIFFERENT userIds. Click Connect in each, then send
+  from one — it should appear in the other. Everyone connected receives every message.
 </p>
 
 <div class="row">
@@ -67,7 +67,13 @@
       document.getElementById("send").disabled = true;
     };
     ws.onerror = () => log("socket error — is the server running?", "err");
-    ws.onmessage = (e) => log(`recv  ${e.data}`, "recv");
+    ws.onmessage = (e) => {
+      const msg = JSON.parse(e.data);
+      // Slice 3: messages now arrive from OTHER tabs too, so label the sender.
+      const mine = msg.senderId === document.getElementById("user").value.trim();
+      log(`recv  ${mine ? "(you)  " : "(them) "}${msg.body}`, "recv");
+      log(`      ${e.data}`, "recv");
+    };
   };
 
   document.getElementById("send").onclick = () => {

@@ -1,4 +1,6 @@
-import { WebSocketServer } from "ws";
+// WebSocket is imported as a value (not `type WebSocket`) so the readyState
+// constants — WebSocket.OPEN, .CLOSED, .CONNECTING, .CLOSING — exist at runtime.
+import { WebSocketServer, WebSocket } from "ws";
 import type { IncomingMessage } from "node:http";
 import { Types } from "mongoose";
 import { config } from "./config.js";
@@ -6,14 +8,15 @@ import { connectToMongo, disconnectFromMongo } from "./db.js";
 import { MessageModel } from "./models/Message.js";
 
 /**
- * SLICE 2 — identity comes from the connection, not the message body.
+ * SLICE 3 — the server remembers who is connected, and delivers to all of them.
  *
- * Slice 1 trusted `senderId` from the payload, so any client could claim to be
- * anyone. Now the server reads the user's id off the WebSocket handshake and uses
- * that instead, ignoring whatever the client asserts.
+ * A Map holds userId -> live socket, so a message can reach someone other than the
+ * sender. Every connected client receives every message: one global chatroom.
  *
- * NOT in this slice: routing to other users, a Chat model, presence, pub/sub.
- * Messages still echo only back to the sender.
+ * `chatId` is still sent and still stored, but is temporarily MEANINGLESS — nothing
+ * filters on it. Slice 4 adds a Chat model with participants and makes it matter.
+ *
+ * NOT in this slice: Chat model, participants, authorization, presence, pub/sub.
  */
 
 /**
@@ -39,30 +42,19 @@ async function main(): Promise<void> {
   const wss = new WebSocketServer({ port: config.port });
   console.log(`[ws] listening on ws://localhost:${config.port}`);
 
-  // ---- EDIT 1 -------------------------------------------------------------
-  // Add a second parameter, `req`, to this handler. `ws` has always passed it;
-  // slice 1 just ignored it. Type it as IncomingMessage:
-  //
-  //     wss.on("connection", (socket, req: IncomingMessage) => {
-  // -------------------------------------------------------------------------
-  wss.on("connection", (socket, req: IncomingMessage) => {
-    // ---- EDIT 2 -----------------------------------------------------------
-    // Read the identity, and refuse the connection if there isn't one.
-    //
-    //   1. const userId = readUserId(req);
-    //   2. if (!userId) { close the socket and return }
-    //
-    // For step 2, close with code 1008 (Policy Violation) and a reason string —
-    // same two-argument shape as any other close:
-    //     socket.close(1008, "a valid userId query parameter is required");
-    // The bare `return` matters: without it the handler keeps going and
-    // registers handlers on a socket that is already closing.
-    //
-    // Then log who arrived, so you can see it working:
-    //     console.log(`[ws] connected: ${userId.toString()}`);
-    //
-    // YOUR CODE:
+  /**
+   * Who is currently connected, as userId -> socket.
+   *
+   * Keys are strings, never ObjectId: Map compares keys with === (identity), and two
+   * ObjectIds holding the same hex are different objects, so .get() would always miss.
+   *
+   * This Map lives inside one Node process. That is precisely why slice 5 needs a
+   * Redis Pub/Sub backplane — a second instance has its own, separate Map and cannot
+   * see the sockets held here.
+   */
+  const connections = new Map<string, WebSocket>();
 
+  wss.on("connection", (socket, req: IncomingMessage) => {
     const userId = readUserId(req);
     if (!userId) { 
       socket.close(1008, "a valid userId query parameter is required");
@@ -71,18 +63,13 @@ async function main(): Promise<void> {
 
     console.log(`[ws] connected: ${userId.toString()}`)
 
-    // -----------------------------------------------------------------------
+    connections.set(userId.toString(), socket);
+    console.log(`Number of sockets: ${connections.size}`);
 
     socket.on("message", async (raw) => {
       try {
         const data = JSON.parse(raw.toString());
 
-        // ---- EDIT 3 ---------------------------------------------------
-        // Change senderId below from `data.senderId` to `userId`.
-        //
-        // One line, and it is the whole point of the slice: the sender is
-        // now whoever owns this connection, not whoever the payload claims.
-        // ---------------------------------------------------------------
         const saved = await MessageModel.create({
           chatId: data.chatId,
           senderId: userId,
@@ -90,7 +77,17 @@ async function main(): Promise<void> {
           serverTimestamp: new Date(),
         });
 
-        socket.send(JSON.stringify(saved));
+        // Deliver to every connected client. A Map yields [key, value] pairs when
+        // iterated, so .values() is needed to get the sockets themselves.
+        //
+        // The readyState guard is not optional: a socket can be mid-close, and
+        // sending to a closing socket throws. The sender is included here, which is
+        // how their own message comes back to them carrying its _id.
+        for (const peer of connections.values()) {
+          if (peer.readyState === WebSocket.OPEN) {
+            peer.send(JSON.stringify(saved))
+          }
+        }
       } catch (err) {
         console.error("[ws] failed to handle message:", err);
       }
@@ -98,6 +95,10 @@ async function main(): Promise<void> {
 
     socket.on("close", () => {
       console.log("[ws] client disconnected");
+
+      // Without this the Map only grows (a leak), and the loop above would try to
+      // send into a dead socket instead of treating that user as offline.
+      connections.delete(userId.toString());
     });
 
     socket.on("error", (err) => {

@@ -11,15 +11,16 @@ for scope.
 **Decided (2026-09-01):** 1:1 chat first, generalize to groups in a later slice ·
 lightweight auth (username → userId + token on the WS handshake), not a full login flow.
 
-**Repo state:** slice 2 complete. Slice 1 = WS → server timestamp → Mongo → echo.
+**Repo state:** slice 3 complete. Slice 1 = WS → server timestamp → Mongo → echo.
 Slice 2 = identity read from the handshake query string (`?userId=`), so `senderId` comes
-from the connection and a client can no longer spoof it. No remote yet.
+from the connection and a client can no longer spoof it. Slice 3 = a `Map<string, WebSocket>`
+registry of connected users; every message is delivered to all of them (one global
+chatroom). `chatId` is stored but nothing filters on it yet. Running Node 24. No remote yet.
 
 **Slices are ONE concept each** — this was re-cut on 2026-09-30 after a first attempt at
 slice 2 bundled six concepts and had to be rolled back (parked at `84aa8f1` on
-`slice-2-routing`). Remaining order: 3 = connection registry + broadcast to all connected
-(two tabs talking); 4 = Chat model + participants + authorization; 5 = Redis Pub/Sub
-backplane; then inbox, presence, groups. Test tooling is its own slice, never bundled
+`slice-2-routing`). Remaining order: 4 = Chat model + participants + authorization (makes
+`chatId` meaningful); 5 = Redis Pub/Sub backplane; then inbox, presence, groups. Test tooling is its own slice, never bundled
 into a feature slice.
 
 ## Project Purpose
