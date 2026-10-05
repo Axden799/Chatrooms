@@ -1,6 +1,6 @@
 <!doctype html>
 <meta charset="utf-8" />
-<title>Chatrooms — slice 3 test client</title>
+<title>Chatrooms — slice 4 test client</title>
 <style>
   body { font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; max-width: 46rem; margin: 2rem auto; padding: 0 1rem; }
   #log { border: 1px solid #ccc; border-radius: 6px; height: 20rem; overflow-y: auto; padding: .75rem; white-space: pre-wrap; }
@@ -11,10 +11,11 @@
   .sent { color: #0a7; } .recv { color: #06c; } .sys { color: #888; } .err { color: #c00; }
 </style>
 
-<h1>slice 3 test client</h1>
+<h1>slice 4 test client</h1>
 <p class="sys">
-  Open this file in TWO tabs with DIFFERENT userIds. Click Connect in each, then send
-  from one — it should appear in the other. Everyone connected receives every message.
+  Run <code>npm run seed</code> for ids, then open this file in THREE tabs. Alice and Bob
+  are in the chat; Carol is not. Paste the same chatId in all three. Sending from Alice
+  reaches Bob but not Carol; sending from Carol is rejected outright.
 </p>
 
 <div class="row">

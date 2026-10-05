@@ -12,6 +12,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
+    "seed": "tsx src/scripts/seed.ts",
     "peek": "docker exec chatrooms-mongo mongosh chatrooms --quiet --eval 'db.messages.find().sort({serverTimestamp:-1}).forEach(d => print(d.serverTimestamp.toISOString() + \"  \" + d.senderId + \"  \" + d.body))'"
   },
   "dependencies": {

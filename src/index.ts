@@ -6,17 +6,19 @@ import { Types } from "mongoose";
 import { config } from "./config.js";
 import { connectToMongo, disconnectFromMongo } from "./db.js";
 import { MessageModel } from "./models/Message.js";
+import { ChatModel } from "./models/Chat.js";
 
 /**
- * SLICE 3 — the server remembers who is connected, and delivers to all of them.
+ * SLICE 4 — conversations have members, and membership gates both directions.
  *
- * A Map holds userId -> live socket, so a message can reach someone other than the
- * sender. Every connected client receives every message: one global chatroom.
+ * `chatId` finally means something. A message is only accepted from a participant of
+ * that chat, and is only delivered to its participants. Both come from one lookup.
  *
- * `chatId` is still sent and still stored, but is temporarily MEANINGLESS — nothing
- * filters on it. Slice 4 adds a Chat model with participants and makes it matter.
+ * Note the delivery loop no longer iterates the whole registry. It iterates the chat's
+ * participants and looks each one up by id — which is exactly why the registry is a
+ * Map keyed on userId rather than the Set that `ws` already exposes as wss.clients.
  *
- * NOT in this slice: Chat model, participants, authorization, presence, pub/sub.
+ * NOT in this slice: presence, pub/sub, offline delivery, real users or tokens.
  */
 
 /**
@@ -70,6 +72,18 @@ async function main(): Promise<void> {
       try {
         const data = JSON.parse(raw.toString());
 
+        const chat = await ChatModel.findById(data.chatId);
+        if (!chat) {
+          console.warn("Could not find chat ID");
+          return;
+        }
+
+        const isParticipant = chat.participantIds.some((i) => i.toString() === userId.toString());
+        if (!isParticipant) {
+          console.warn(`[ws] ${userId.toString()} is not in chat ${data.chatId} — ignored`);
+          return;
+        }
+
         const saved = await MessageModel.create({
           chatId: data.chatId,
           senderId: userId,
@@ -77,15 +91,16 @@ async function main(): Promise<void> {
           serverTimestamp: new Date(),
         });
 
-        // Deliver to every connected client. A Map yields [key, value] pairs when
-        // iterated, so .values() is needed to get the sockets themselves.
+        // Deliver to the chat's participants, looking each socket up by user id —
+        // the lookup that justified a Map over the Set in wss.clients. `peer &&` is
+        // required because a participant may simply not be connected.
         //
-        // The readyState guard is not optional: a socket can be mid-close, and
-        // sending to a closing socket throws. The sender is included here, which is
-        // how their own message comes back to them carrying its _id.
-        for (const peer of connections.values()) {
-          if (peer.readyState === WebSocket.OPEN) {
-            peer.send(JSON.stringify(saved))
+        // An offline participant gets nothing and will NOT receive it on reconnect.
+        // That gap is what the inbox slice fixes.
+        for (const id of chat.participantIds) {
+          const peer = connections.get(id.toString());
+          if (peer && peer.readyState === WebSocket.OPEN) {
+            peer.send(JSON.stringify(saved));
           }
         }
       } catch (err) {
