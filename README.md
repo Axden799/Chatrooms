@@ -74,6 +74,20 @@ docker exec -it chatrooms-mongo mongosh chatrooms --eval "db.messages.find().pre
 
 The collection is `messages` — Mongoose lowercases and pluralizes the model name `Message`.
 
+## Running two instances (the Redis backplane)
+
+Slice 5 made instances able to reach each other's clients. To see it, run two:
+
+```bash
+npm run seed
+PORT=8101 npm run dev     # terminal 1
+PORT=8102 npm run dev     # terminal 2
+```
+
+Both should log `[redis] connected (pub + sub)`. Then open `public/client.html` in two
+tabs and set the **port** field differently — Alice on `8101`, Bob on `8102`, same chatId.
+A message from Alice reaches Bob even though they are on separate processes.
+
 ## All commands
 
 | Command | Purpose |

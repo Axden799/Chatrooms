@@ -7,18 +7,21 @@ import { config } from "./config.js";
 import { connectToMongo, disconnectFromMongo } from "./db.js";
 import { MessageModel } from "./models/Message.js";
 import { ChatModel } from "./models/Chat.js";
+import { connectToRedis, CHANNEL } from "./bus.js";
 
 /**
- * SLICE 4 — conversations have members, and membership gates both directions.
+ * SLICE 5 — instances reach each other's clients through Redis.
  *
- * `chatId` finally means something. A message is only accepted from a participant of
- * that chat, and is only delivered to its participants. Both come from one lookup.
+ * The connections Map lives inside one process, so two instances could not deliver to
+ * each other's clients: Alice on instance 1 was invisible to instance 2, and the
+ * message was persisted and silently dropped.
  *
- * Note the delivery loop no longer iterates the whole registry. It iterates the chat's
- * participants and looks each one up by id — which is exactly why the registry is a
- * Map keyed on userId rather than the Set that `ws` already exposes as wss.clients.
+ * The fix MOVES delivery. The message handler no longer sends to anyone — it publishes
+ * to a Redis channel. Every instance is subscribed, so every instance receives it and
+ * delivers to whichever participants it happens to hold. No instance ever has to know
+ * where a given user is connected.
  *
- * NOT in this slice: presence, pub/sub, offline delivery, real users or tokens.
+ * NOT in this slice: presence, offline delivery (the inbox), real users or tokens.
  */
 
 /**
@@ -40,6 +43,7 @@ function readUserId(req: IncomingMessage): Types.ObjectId | null {
 
 async function main(): Promise<void> {
   await connectToMongo();
+  const bus = await connectToRedis();
 
   const wss = new WebSocketServer({ port: config.port });
   console.log(`[ws] listening on ws://localhost:${config.port}`);
@@ -55,6 +59,28 @@ async function main(): Promise<void> {
    * see the sockets held here.
    */
   const connections = new Map<string, WebSocket>();
+
+  // Delivery lives HERE, not in the message handler. Redis runs this callback on
+  // every instance for every published message — including the instance that
+  // published it, which is how a sender still gets their own copy back.
+  //
+  // Each instance answers the same question against its OWN Map: do I hold any of
+  // this chat's participants? Usually not, and the loop sends nothing. That is the
+  // design — no instance has to know where anyone is connected.
+  await bus.sub.subscribe(CHANNEL, async (raw) => {
+    const saved = JSON.parse(raw)
+    const chat = await ChatModel.findById(saved.chatId);
+    if (!chat) {
+      console.warn(`[bus] chat ${saved.chatId} not found — cannot deliver`);
+      return;
+    }
+    for (const id of chat.participantIds) {
+      const peer = connections.get(id.toString());
+      if (peer && peer.readyState === WebSocket.OPEN) {
+        peer.send(JSON.stringify(saved));
+      }
+    }
+  })
 
   wss.on("connection", (socket, req: IncomingMessage) => {
     const userId = readUserId(req);
@@ -91,18 +117,10 @@ async function main(): Promise<void> {
           serverTimestamp: new Date(),
         });
 
-        // Deliver to the chat's participants, looking each socket up by user id —
-        // the lookup that justified a Map over the Set in wss.clients. `peer &&` is
-        // required because a participant may simply not be connected.
-        //
-        // An offline participant gets nothing and will NOT receive it on reconnect.
-        // That gap is what the inbox slice fixes.
-        for (const id of chat.participantIds) {
-          const peer = connections.get(id.toString());
-          if (peer && peer.readyState === WebSocket.OPEN) {
-            peer.send(JSON.stringify(saved));
-          }
-        }
+        // Publish instead of delivering. `connections` only holds sockets belonging
+        // to THIS process, so a participant on another instance is invisible here.
+        // Every instance is subscribed, so whichever one holds them delivers.
+        await bus.pub.publish(CHANNEL, JSON.stringify(saved));
       } catch (err) {
         console.error("[ws] failed to handle message:", err);
       }
@@ -124,6 +142,8 @@ async function main(): Promise<void> {
   const shutdown = async (): Promise<void> => {
     console.log("\n[app] shutting down");
     wss.close();
+    await bus.sub.quit();
+    await bus.pub.quit();
     await disconnectFromMongo();
     process.exit(0);
   };

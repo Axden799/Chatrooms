@@ -15,13 +15,16 @@ lightweight auth (username → userId + token on the WS handshake), not a full l
 Slice 2 = identity read from the handshake query string (`?userId=`), so `senderId` comes
 from the connection and a client can no longer spoof it. Slice 3 = a `Map<string, WebSocket>`
 registry of connected users. Slice 4 = a `Chat` model with `participantIds`; membership
-gates both sending and receiving, so `chatId` is now meaningful. `npm run seed` creates a
-chat and prints ids for three test tabs. Running Node 24. No remote yet.
+gates both sending and receiving, so `chatId` is now meaningful. Slice 5 = a Redis Pub/Sub
+backplane: the message handler publishes instead of delivering, and a subscribe callback on
+every instance delivers to the participants it holds — so two instances can reach each
+other's clients. `npm run seed` creates a chat and prints ids for test tabs. Running Node 24.
+No remote yet.
 
 **Slices are ONE concept each** — this was re-cut on 2026-09-30 after a first attempt at
 slice 2 bundled six concepts and had to be rolled back (parked at `84aa8f1` on
-`slice-2-routing`). Remaining order: 5 = Redis Pub/Sub backplane; then inbox,
-presence, groups. `Chat` has no `type` field on purpose — derivable from
+`slice-2-routing`). Remaining order: inbox (offline delivery), presence, groups —
+plus the four items under "Deferred work" in DESIGN.md. `Chat` has no `type` field on purpose — derivable from
 `participantIds.length`; add it when a group needs a name. Test tooling is its own slice, never bundled
 into a feature slice.
 

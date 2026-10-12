@@ -102,6 +102,19 @@ last-seen shows when they went offline.
 - **Inbox** — per-recipient undelivered messages, TTL index for retention
 - **Presence** — lives in Redis, not Mongo (connected-user set + last-seen timestamps)
 
+## Deferred work — do these before calling v1 done
+
+Things consciously postponed to keep a slice to ONE concept. Each is a real gap or a real
+improvement, not a cut. (The CUT list above is different — those are things we are never
+building.) Every item here is a candidate for its own small slice.
+
+| # | Item | Deferred at | Why | What it needs |
+|---|---|---|---|---|
+| 1 | **Real `User` records + login** | slice 2 · 2026-09-09 | Slice 2 was about identity on the handshake. Adding a `User` model plus a login endpoint would force restructuring the server to serve HTTP and WebSocket on one port — real work, orthogonal to the slice. | `models/User.ts` (username → userId + token), an HTTP login endpoint. The structural win is already in place: `senderId` comes from the connection, so this only touches the handshake. |
+| 2 | **Token verification on the handshake** | slice 2 · 2026-09-09 | Follows item 1 — without `User` records there is no token to verify. Today any client may claim any `userId` in the query string. | Verify the token at the upgrade request; close with 1008 on failure. **Note:** `ws` fires `connection` only AFTER the 101 handshake is sent, so `socket.close(1008)` there is a post-handshake close — the client sees `open` then immediately `close`. To reject before the 101, use the `verifyClient` option or handle the raw `upgrade` event. Fine as-is for now; do it properly when the token check lands. |
+| 3 | **Carry `participantIds` in the pub/sub payload** | slice 5 · 2026-10-12 | The first slice-5 scaffold did this, and it needed four new TS concepts to express (`BusMessage`, `as` casting, `unknown`, `.map`) on top of publish/subscribe. Too much for one slice. Denis agreed with the design, just not with bundling it. | Publish `{ participantIds: chat.participantIds.map(i => i.toString()), message: saved }` instead of `saved` alone, typed as a `BusMessage` interface. Subscribers then skip the Mongo lookup entirely. **Why it is worth doing:** today every instance re-runs the same `ChatModel.findById` for every message — work the publisher already did — which puts a database round-trip on the delivery path on every instance. It also means instances could compute different recipient lists if membership changed mid-flight; deciding once at publish time fixes that. |
+| 4 | **Per-user channels instead of one global channel** | slice 5 · 2026-10-12 | Would add subscribe/unsubscribe lifecycle management — a second concept on top of the backplane itself. | Subscribe to `user:<id>` on connect, unsubscribe on close; publish once per participant. An instance then only receives traffic for users it holds, and the subscription itself answers "is this user mine?" so no Map check is needed. Current approach broadcasts everything to everyone and filters locally — fine at two instances, wasteful at twenty. |
+
 ## The working agreement (HOW to collaborate — do not skip)
 
 This governs every session, carried over from AdClick. Denis is learning; the goal is that

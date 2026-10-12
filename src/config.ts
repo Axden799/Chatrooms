@@ -17,6 +17,6 @@ function required(name: string): string {
 export const config = {
   port: Number(process.env.PORT ?? 8080),
   mongoUrl: required("MONGO_URL"),
-  // Not read until the pub/sub slice, so it stays optional for now.
-  redisUrl: process.env.REDIS_URL,
+  // Required as of the pub/sub slice — instances cannot reach each other without it.
+  redisUrl: required("REDIS_URL"),
 } as const;
