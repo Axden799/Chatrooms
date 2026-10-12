@@ -7,7 +7,7 @@ import { config } from "./config.js";
 import { connectToMongo, disconnectFromMongo } from "./db.js";
 import { MessageModel } from "./models/Message.js";
 import { ChatModel } from "./models/Chat.js";
-import { connectToRedis, CHANNEL } from "./bus.js";
+import { connectToRedis, disconnectFromRedis, CHANNEL, type BusMessage } from "./bus.js";
 
 /**
  * SLICE 5 — instances reach each other's clients through Redis.
@@ -67,17 +67,22 @@ async function main(): Promise<void> {
   // Each instance answers the same question against its OWN Map: do I hold any of
   // this chat's participants? Usually not, and the loop sends nothing. That is the
   // design — no instance has to know where anyone is connected.
-  await bus.sub.subscribe(CHANNEL, async (raw) => {
-    const saved = JSON.parse(raw)
-    const chat = await ChatModel.findById(saved.chatId);
-    if (!chat) {
-      console.warn(`[bus] chat ${saved.chatId} not found — cannot deliver`);
-      return;
-    }
-    for (const id of chat.participantIds) {
-      const peer = connections.get(id.toString());
+  await bus.sub.subscribe(CHANNEL, (raw) => {
+    // `as BusMessage` is a type ASSERTION, not a check — nothing verifies it at
+    // runtime. That is acceptable only because we wrote the producer: our own publish
+    // above created this, in a shape we control, over a Redis only our servers reach.
+    // Contrast JSON.parse(raw.toString()) in the message handler below, which is
+    // deliberately NOT cast because it comes from a browser. Cast what you produced;
+    // validate what you did not.
+    const { participantIds, message } = JSON.parse(raw) as BusMessage;
+
+    // No Mongo lookup: the recipient list arrived with the message. And no .toString()
+    // on `id` — these came through JSON, which has no ObjectId type, so they are
+    // already text.
+    for (const id of participantIds) {
+      const peer = connections.get(id);
       if (peer && peer.readyState === WebSocket.OPEN) {
-        peer.send(JSON.stringify(saved));
+        peer.send(JSON.stringify(message));
       }
     }
   })
@@ -120,7 +125,15 @@ async function main(): Promise<void> {
         // Publish instead of delivering. `connections` only holds sockets belonging
         // to THIS process, so a participant on another instance is invisible here.
         // Every instance is subscribed, so whichever one holds them delivers.
-        await bus.pub.publish(CHANNEL, JSON.stringify(saved));
+        //
+        // The recipient list travels WITH the message. .map runs toString() on each
+        // ObjectId and returns a new array of text ids — Python's [str(i) for i in ids].
+        // Sending them means no receiving instance has to re-query this chat.
+        const payload: BusMessage = {
+          participantIds: chat.participantIds.map((i) => i.toString()),
+          message: saved,
+        };
+        await bus.pub.publish(CHANNEL, JSON.stringify(payload));
       } catch (err) {
         console.error("[ws] failed to handle message:", err);
       }
@@ -142,8 +155,7 @@ async function main(): Promise<void> {
   const shutdown = async (): Promise<void> => {
     console.log("\n[app] shutting down");
     wss.close();
-    await bus.sub.quit();
-    await bus.pub.quit();
+    await disconnectFromRedis(bus);
     await disconnectFromMongo();
     process.exit(0);
   };
