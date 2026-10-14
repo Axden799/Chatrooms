@@ -1,8 +1,9 @@
 // WebSocket is imported as a value (not `type WebSocket`) so the readyState
 // constants — WebSocket.OPEN, .CLOSED, .CONNECTING, .CLOSING — exist at runtime.
 import { WebSocketServer, WebSocket } from "ws";
+import express, { type Request, type Response } from "express";
 import { createServer } from "node:http";
-import type { IncomingMessage, ServerResponse } from "node:http";
+import type { IncomingMessage } from "node:http";
 import { Types } from "mongoose";
 import { config } from "./config.js";
 import { connectToMongo, disconnectFromMongo } from "./db.js";
@@ -11,32 +12,22 @@ import { ChatModel } from "./models/Chat.js";
 import { connectToRedis, disconnectFromRedis, CHANNEL, type BusMessage } from "./bus.js";
 
 /**
- * SLICE 6 — one port serves both HTTP and WebSocket.
+ * Chatrooms server — WebSocket chat with a Redis backplane.
  *
- * Previously `new WebSocketServer({ port })` bound the port itself, so this process
- * could only speak WebSocket. Now an HTTP server owns the port and the WebSocket
- * server attaches to it. A request carrying `Upgrade: websocket` headers is handed to
- * `ws`; anything else goes to the HTTP handler.
+ * One port serves both protocols: an Express app handles HTTP, and the WebSocket
+ * server attaches to the same HTTP server. A request carrying `Upgrade: websocket` is
+ * claimed by `ws`; anything else goes to Express. That works because a WebSocket
+ * connection begins as an ordinary HTTP GET.
  *
- * That works because a WebSocket connection BEGINS as an ordinary HTTP GET — the same
- * fact slice 2 relied on to read identity off the handshake.
+ * Message flow: a client sends over its socket -> the server checks the sender is a
+ * participant of that chat -> persists with a server timestamp -> PUBLISHES to Redis.
+ * Every instance is subscribed, and each delivers to whichever participants it holds in
+ * its own `connections` Map. No instance has to know where a user is connected.
  *
- * This exists so a later slice can add a login endpoint, which needs HTTP. Nothing
- * about authentication changes here.
+ * NOT YET: real users or tokens (anyone can claim any userId — see DESIGN.md deferred
+ * items 1-2), offline delivery (the inbox), presence, groups.
  *
- * ---- previously (slice 5) ----
- * instances reach each other's clients through Redis.
- *
- * The connections Map lives inside one process, so two instances could not deliver to
- * each other's clients: Alice on instance 1 was invisible to instance 2, and the
- * message was persisted and silently dropped.
- *
- * The fix MOVES delivery. The message handler no longer sends to anyone — it publishes
- * to a Redis channel. Every instance is subscribed, so every instance receives it and
- * delivers to whichever participants it happens to hold. No instance ever has to know
- * where a given user is connected.
- *
- * NOT in this slice: presence, offline delivery (the inbox), real users or tokens.
+ * Slice history is in git log; DESIGN.md holds scope and the deferred list.
  */
 
 /**
@@ -60,22 +51,33 @@ async function main(): Promise<void> {
   await connectToMongo();
   const bus = await connectToRedis();
 
-  // An HTTP server owns the port. The WebSocket server attaches to it below, so one
-  // port serves both protocols: a request carrying `Upgrade: websocket` is claimed by
-  // `ws`, anything else lands in this handler. That works because a WebSocket
-  // connection begins as an ordinary HTTP GET.
+  // Express handles the HTTP side: routing by method + path, and body parsing.
+  // app.use() installs middleware — a function that runs on every request before any
+  // route. express.json() is the one that reads the request body and fills in
+  // req.body; without it req.body is undefined and a login would have nothing to
+  // read. It replaces a hand-rolled stream read in every endpoint.
+  //
+  // res.json() does in one call what slice 6 took three lines for: status 200,
+  // Content-Type: application/json, stringify, end. Express also 404s any unmatched
+  // path on its own, so there is no manual fallthrough to guard.
   //
   // /health exists because Railway and most platforms poll one to decide whether this
-  // instance is alive and should receive traffic.
-  const httpServer = createServer((req: IncomingMessage, res: ServerResponse) => {
-    if (req.url === "/health") {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ ok: true }));
-      return;
-    }
-    res.writeHead(404);
-    res.end();
+  // instance should receive traffic. /echo is temporary — it proves body parsing works
+  // and goes away when POST /register lands.
+  const app = express();
+  app.use(express.json());
+  app.get("/health", (req: Request, res: Response) => {
+    res.json({ok: true});
   });
+  app.post("/echo", (req: Request, res: Response) => {
+    res.json({ youSent: req.body });
+  });
+
+  // An Express app IS a request handler of exactly the shape createServer wants, so it
+  // drops in where slice 6's hand-written function was. Everything below is unchanged:
+  // the WebSocket server attaches to this same HTTP server, and HTTP vs WebSocket is
+  // still decided by the Upgrade header on one port.
+  const httpServer = createServer(app);
 
   // `server:` rather than `port:` — ws does not open a port, it watches this server.
   const wss = new WebSocketServer({ server: httpServer });
