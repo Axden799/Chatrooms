@@ -19,4 +19,11 @@ export const config = {
   mongoUrl: required("MONGO_URL"),
   // Required as of the pub/sub slice — instances cannot reach each other without it.
   redisUrl: required("REDIS_URL"),
+
+  /**
+   * Signs and verifies login tokens. `required()` rather than a default on purpose: a
+   * fallback value would silently ship to production, and anyone who knew it could mint
+   * a valid token for any user. Better to refuse to boot.
+   */
+  jwtSecret: required("JWT_SECRET"),
 } as const;

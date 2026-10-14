@@ -12,6 +12,7 @@ import { ChatModel } from "./models/Chat.js";
 import { UserModel } from "./models/User.js";
 import bcrypt from "bcrypt";
 import { MongoServerError } from "mongodb";
+import jwt from "jsonwebtoken";
 import { connectToRedis, disconnectFromRedis, CHANNEL, type BusMessage } from "./bus.js";
 
 /**
@@ -101,7 +102,15 @@ async function main(): Promise<void> {
       res.status(400).json({ error: "password must be at least 8 characters"});
       return;
     }
+
+    const existing = await UserModel.findOne({ username });
+    if (existing) {
+      res.status(409).json({ error: "username already taken" });
+      return;
+    }
+
     const passwordHash = await bcrypt.hash(password, 10);
+
     try {
       const user = await UserModel.create({ username, passwordHash });
       res.status(201).json({ id: user._id, username: user.username });
@@ -119,6 +128,47 @@ async function main(): Promise<void> {
   // drops in where slice 6's hand-written function was. Everything below is unchanged:
   // the WebSocket server attaches to this same HTTP server, and HTTP vs WebSocket is
   // still decided by the Upgrade header on one port.
+  // Exchange a correct username + password for a signed token.
+  //
+  // bcrypt.compare cannot un-hash anything: it slices the salt out of the stored
+  // 60-char hash ($2b$ / cost / 22-char salt / 31-char digest), hashes the submitted
+  // password with that same salt and cost, and compares digests.
+  //
+  // The 401 is deliberately IDENTICAL for "no such user" and "wrong password".
+  // Distinguishing them turns this endpoint into a way to discover which usernames
+  // exist. (A hardened version would also take the same TIME in both cases; a fast
+  // reply means no hash was compared. Out of scope, but that side channel is real.)
+  //
+  // The token's payload is base64, NOT encrypted — anyone holding it can read `sub`.
+  // What makes it trustworthy is the signature: altering the payload invalidates it,
+  // and producing a valid one requires JWT_SECRET. The server stores NOTHING; every
+  // later request re-proves itself from the token alone, which is why two instances
+  // can both verify with no shared session store.
+  //
+  // expiresIn adds an `exp` field that jwt.verify() compares against the clock. It
+  // limits the damage window if a token is stolen, but a token cannot be revoked
+  // before it expires — that is the trade-off against server-side sessions, which
+  // are revocable at the cost of a lookup per request.
+  app.post("/login", async (req: Request, res: Response) => {
+    const { username, password } = req.body;
+    if (typeof username !== "string" || typeof password !== "string") {
+      res.status(400).json({ error: "username and password must be strings" });
+      return;
+    }
+    const user = await UserModel.findOne({ username });
+    const ok = user ? await bcrypt.compare(password, user.passwordHash): false;
+    if (!user || !ok) {
+      res.status(401).json({ error: "invalid username or password" });
+      return;
+    }
+    const token = jwt.sign(
+      { sub: user._id.toString() },
+      config.jwtSecret,
+      { expiresIn: "7d" }
+    );
+    res.json({ token });
+  });
+
   const httpServer = createServer(app);
 
   // `server:` rather than `port:` — ws does not open a port, it watches this server.

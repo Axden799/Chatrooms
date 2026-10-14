@@ -23,13 +23,17 @@ WebSocket server attaches to it, so one port serves both protocols. Slice 7a = E
 handles the HTTP side (routing + `express.json()` body parsing); `GET /health` returns
 `{"ok":true}` and Slice 7b = a `User` model
 (`username` unique + lowercased, `passwordHash`) and `POST /register`, which bcrypt-hashes
-the password at cost 10 and stores only the hash. `npm run seed` creates a chat and prints ids for test tabs.
+the password at cost 10 and stores only the hash. Slice 7c = `POST /login`, which verifies
+with `bcrypt.compare` and returns a JWT signed with `JWT_SECRET` (7-day expiry); the same
+401 is returned for a wrong password and an unknown username so the endpoint cannot be used
+to enumerate accounts. `npm run seed` creates a chat and prints ids for test tabs.
 Running Node 24. No remote yet.
 
 **Slices are ONE concept each** — this was re-cut on 2026-09-30 after a first attempt at
 slice 2 bundled six concepts and had to be rolled back (parked at `84aa8f1` on
-`slice-2-routing`). Remaining order: slice 7c = `POST /login` returning a JWT; slice 8 = the handshake
-verifies the token instead of trusting `?userId=`. Then inbox
+`slice-2-routing`). Remaining order: slice 8 = the handshake verifies the token
+instead of trusting `?userId=` — this is where the spoofing hole actually closes, and
+`client.html` will need to log in and carry the token. Then inbox
 (offline delivery), presence, groups. Slices 7-8 close the deferred items 1-2 and are the
 biggest real gap: today anyone who knows a userId can be that user, and userIds are
 public (they appear in every message's `senderId`). See also "Deferred work" in DESIGN.md. `Chat` has no `type` field on purpose — derivable from
