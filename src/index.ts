@@ -9,6 +9,9 @@ import { config } from "./config.js";
 import { connectToMongo, disconnectFromMongo } from "./db.js";
 import { MessageModel } from "./models/Message.js";
 import { ChatModel } from "./models/Chat.js";
+import { UserModel } from "./models/User.js";
+import bcrypt from "bcrypt";
+import { MongoServerError } from "mongodb";
 import { connectToRedis, disconnectFromRedis, CHANNEL, type BusMessage } from "./bus.js";
 
 /**
@@ -69,8 +72,47 @@ async function main(): Promise<void> {
   app.get("/health", (req: Request, res: Response) => {
     res.json({ok: true});
   });
-  app.post("/echo", (req: Request, res: Response) => {
-    res.json({ youSent: req.body });
+
+  // Create a user, storing only a bcrypt hash of the password — never the password.
+  //
+  // req.body is typed `any` because Express cannot know what a client sends, so it is
+  // CHECKED rather than asserted. The password length is checked here and not in the
+  // schema because the schema only ever sees the hash, which is always ~60 chars.
+  //
+  // The 10 is bcrypt's cost factor: 2^10 iterations, deliberately slow to make
+  // brute-forcing stolen hashes expensive. A fresh random salt is generated per call
+  // and embedded in the output, which is why there is no separate salt field and why
+  // hashing the same password twice gives different strings.
+  //
+  // A duplicate username does NOT arrive as a Mongoose ValidationError: `unique: true`
+  // creates an index in Mongo, so Mongo itself throws with code 11000. `catch (err)` is
+  // left unannotated (TS types it `unknown` under strict) and narrowed with
+  // `instanceof`, which is a real runtime check rather than an assertion.
+  //
+  // The response carries id and username only. `res.json(user)` would ship the hash
+  // to the client, which it never needs.
+  app.post("/register", async (req: Request, res: Response) => {
+    const { username, password } = req.body;
+    if (typeof username !== "string" || typeof password !== "string") {
+      res.status(400).json({ error: "username and password must be strings" });
+      return;
+    }
+    if (password.length < 8) {
+      res.status(400).json({ error: "password must be at least 8 characters"});
+      return;
+    }
+    const passwordHash = await bcrypt.hash(password, 10);
+    try {
+      const user = await UserModel.create({ username, passwordHash });
+      res.status(201).json({ id: user._id, username: user.username });
+    } catch (err) {
+      if (err instanceof MongoServerError && err.code === 11000) {
+        res.status(409).json({ error: "username already taken" });
+        return;
+      }
+      console.error("[register] failed:", err);
+      res.status(500).json({ error: "could not create user" });
+    }
   });
 
   // An Express app IS a request handler of exactly the shape createServer wants, so it

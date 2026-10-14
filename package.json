@@ -16,6 +16,7 @@
     "peek": "docker exec chatrooms-mongo mongosh chatrooms --quiet --eval 'db.messages.find().sort({serverTimestamp:-1}).forEach(d => print(d.serverTimestamp.toISOString() + \"  \" + d.senderId + \"  \" + d.body))'"
   },
   "dependencies": {
+    "bcrypt": "^6.0.0",
     "dotenv": "^16.4.5",
     "express": "^5.3.0",
     "mongoose": "^8.6.0",
@@ -23,6 +24,7 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@types/bcrypt": "^6.0.0",
     "@types/express": "^5.0.6",
     "@types/node": "^22.5.0",
     "@types/ws": "^8.5.12",
