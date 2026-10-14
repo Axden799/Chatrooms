@@ -1,7 +1,8 @@
 // WebSocket is imported as a value (not `type WebSocket`) so the readyState
 // constants — WebSocket.OPEN, .CLOSED, .CONNECTING, .CLOSING — exist at runtime.
 import { WebSocketServer, WebSocket } from "ws";
-import type { IncomingMessage } from "node:http";
+import { createServer } from "node:http";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { Types } from "mongoose";
 import { config } from "./config.js";
 import { connectToMongo, disconnectFromMongo } from "./db.js";
@@ -10,7 +11,21 @@ import { ChatModel } from "./models/Chat.js";
 import { connectToRedis, disconnectFromRedis, CHANNEL, type BusMessage } from "./bus.js";
 
 /**
- * SLICE 5 — instances reach each other's clients through Redis.
+ * SLICE 6 — one port serves both HTTP and WebSocket.
+ *
+ * Previously `new WebSocketServer({ port })` bound the port itself, so this process
+ * could only speak WebSocket. Now an HTTP server owns the port and the WebSocket
+ * server attaches to it. A request carrying `Upgrade: websocket` headers is handed to
+ * `ws`; anything else goes to the HTTP handler.
+ *
+ * That works because a WebSocket connection BEGINS as an ordinary HTTP GET — the same
+ * fact slice 2 relied on to read identity off the handshake.
+ *
+ * This exists so a later slice can add a login endpoint, which needs HTTP. Nothing
+ * about authentication changes here.
+ *
+ * ---- previously (slice 5) ----
+ * instances reach each other's clients through Redis.
  *
  * The connections Map lives inside one process, so two instances could not deliver to
  * each other's clients: Alice on instance 1 was invisible to instance 2, and the
@@ -45,8 +60,31 @@ async function main(): Promise<void> {
   await connectToMongo();
   const bus = await connectToRedis();
 
-  const wss = new WebSocketServer({ port: config.port });
-  console.log(`[ws] listening on ws://localhost:${config.port}`);
+  // An HTTP server owns the port. The WebSocket server attaches to it below, so one
+  // port serves both protocols: a request carrying `Upgrade: websocket` is claimed by
+  // `ws`, anything else lands in this handler. That works because a WebSocket
+  // connection begins as an ordinary HTTP GET.
+  //
+  // /health exists because Railway and most platforms poll one to decide whether this
+  // instance is alive and should receive traffic.
+  const httpServer = createServer((req: IncomingMessage, res: ServerResponse) => {
+    if (req.url === "/health") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true }));
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+
+  // `server:` rather than `port:` — ws does not open a port, it watches this server.
+  const wss = new WebSocketServer({ server: httpServer });
+
+  // Something must still open the port, and now it is the HTTP server. The callback
+  // fires once the port is actually bound, so the log cannot precede it.
+  httpServer.listen(config.port, () => {
+    console.log(`[http+ws] listening on port ${config.port}`);
+  });
 
   /**
    * Who is currently connected, as userId -> socket.
@@ -155,6 +193,7 @@ async function main(): Promise<void> {
   const shutdown = async (): Promise<void> => {
     console.log("\n[app] shutting down");
     wss.close();
+    httpServer.close();
     await disconnectFromRedis(bus);
     await disconnectFromMongo();
     process.exit(0);

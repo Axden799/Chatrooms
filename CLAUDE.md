@@ -18,13 +18,18 @@ registry of connected users. Slice 4 = a `Chat` model with `participantIds`; mem
 gates both sending and receiving, so `chatId` is now meaningful. Slice 5 = a Redis Pub/Sub
 backplane: the message handler publishes instead of delivering, and a subscribe callback on
 every instance delivers to the participants it holds — so two instances can reach each
-other's clients. `npm run seed` creates a chat and prints ids for test tabs. Running Node 24.
-No remote yet.
+other's clients. Slice 6 = an HTTP server owns the port and the
+WebSocket server attaches to it, so one port serves both protocols; `GET /health`
+returns `{"ok":true}`. `npm run seed` creates a chat and prints ids for test tabs.
+Running Node 24. No remote yet.
 
 **Slices are ONE concept each** — this was re-cut on 2026-09-30 after a first attempt at
 slice 2 bundled six concepts and had to be rolled back (parked at `84aa8f1` on
-`slice-2-routing`). Remaining order: inbox (offline delivery), presence, groups —
-plus the four items under "Deferred work" in DESIGN.md. `Chat` has no `type` field on purpose — derivable from
+`slice-2-routing`). Remaining order: slice 7 = users + login returning a JWT;
+slice 8 = the handshake verifies the token instead of trusting `?userId=`. Then inbox
+(offline delivery), presence, groups. Slices 7-8 close the deferred items 1-2 and are the
+biggest real gap: today anyone who knows a userId can be that user, and userIds are
+public (they appear in every message's `senderId`). See also "Deferred work" in DESIGN.md. `Chat` has no `type` field on purpose — derivable from
 `participantIds.length`; add it when a group needs a name. Test tooling is its own slice, never bundled
 into a feature slice.
 
