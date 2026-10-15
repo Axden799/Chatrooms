@@ -35,20 +35,54 @@ import { connectToRedis, disconnectFromRedis, CHANNEL, type BusMessage } from ".
  */
 
 /**
- * Pull `?userId=...` off the handshake. Returns null if absent or malformed.
+ * Verify the `?token=...` on the handshake and return the user id it proves.
+ * Returns null for any failure, and the caller refuses the connection.
  *
- * `req` is the HTTP GET that opened this connection — the one moment a URL and
- * headers exist. After the server answers 101 Switching Protocols there are only
- * frames, with nowhere to put metadata. So identity must be read here.
+ * Renamed from readUserId: the old name described trusting a claim. This one
+ * VERIFIES. Until now a client sent `?userId=` and the server believed it, so
+ * anyone who knew a userId could be that user — and userIds are not secret, they
+ * appear in every message's senderId.
  *
- * The throwaway base URL is needed because `req.url` is a relative path
- * ("/?userId=abc") and the URL constructor requires an absolute one.
+ * Still read off `req`, the HTTP GET that opened this connection, because that is
+ * the one moment a URL exists. After the 101 response there are only frames.
+ *
+ * Why the token is in the query string rather than an Authorization header: the
+ * browser's WebSocket API cannot set custom headers. Cookies, the subprotocol
+ * field, or the query string are the only options.
  */
-function readUserId(req: IncomingMessage): Types.ObjectId | null {
+function userIdFromToken(req: IncomingMessage): Types.ObjectId | null {
+  // jwt.verify THROWS rather than returning false — on a tampered signature, the
+  // wrong secret, a string that is not a JWT, and on expiry — so the try/catch is
+  // load-bearing. Every failure means the same thing: not authenticated. The client
+  // is deliberately not told which failure it was; "expired" versus "forged" is
+  // information an attacker can use.
+  //
+  // verify returns `string | JwtPayload`, because a JWT payload is allowed to be a
+  // bare string. We always sign an object, so that branch never fires, but TS will
+  // not let you read .sub off a union. `typeof` here is JavaScript's runtime
+  // operator, not TypeScript's type-level one — it survives compilation and really
+  // inspects the value, which is what lets TS narrow the type afterwards.
+  //
+  // `sub` is `string | undefined` because the JWT spec makes it optional, and it is
+  // a STRING because JSON has no ObjectId type. isValid() only asks a question and
+  // returns a boolean; `new Types.ObjectId()` is what actually builds the object,
+  // and it throws on garbage — hence guard, then convert.
+  //
+  // The signature proves WE issued this token. It does not prove the user still
+  // exists: an account could be deleted while a valid token is held. Catching that
+  // needs a Mongo lookup per handshake. Out of scope; the gap is real.
   const url = new URL(req.url ?? "/", "http://placeholder");
-  const raw = url.searchParams.get("userId");
-  if (!raw || !Types.ObjectId.isValid(raw)) return null;
-  return new Types.ObjectId(raw);
+  const token = url.searchParams.get("token");
+  if (!token) return null;
+  try {
+    const payload = jwt.verify(token, config.jwtSecret);
+    if (typeof payload === "string") return null;
+    const sub = payload.sub;
+    if (!sub || !Types.ObjectId.isValid(sub)) return null;
+    return new Types.ObjectId(sub);
+  } catch {
+    return null;
+  }
 }
 
 async function main(): Promise<void> {
@@ -220,9 +254,9 @@ async function main(): Promise<void> {
   })
 
   wss.on("connection", (socket, req: IncomingMessage) => {
-    const userId = readUserId(req);
+    const userId = userIdFromToken(req);
     if (!userId) { 
-      socket.close(1008, "a valid userId query parameter is required");
+      socket.close(1008, "a valid token query parameter is required");
       return;
     }
 

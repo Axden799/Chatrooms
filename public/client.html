@@ -1,31 +1,47 @@
 <!doctype html>
 <meta charset="utf-8" />
-<title>Chatrooms — slice 5 test client</title>
+<title>Chatrooms — slice 8 test client</title>
 <style>
-  body { font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; max-width: 46rem; margin: 2rem auto; padding: 0 1rem; }
-  #log { border: 1px solid #ccc; border-radius: 6px; height: 20rem; overflow-y: auto; padding: .75rem; white-space: pre-wrap; }
-  .row { display: flex; gap: .5rem; margin-top: .75rem; align-items: center; }
-  input { padding: .5rem; font: inherit; flex: 1; }
-  button { padding: .5rem 1rem; font: inherit; cursor: pointer; }
-  label { color: #666; min-width: 5.5rem; }
-  .sent { color: #0a7; } .recv { color: #06c; } .sys { color: #888; } .err { color: #c00; }
+  body { font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; max-width: 48rem; margin: 2rem auto; padding: 0 1rem; }
+  #log { border: 1px solid #ccc; border-radius: 6px; height: 18rem; overflow-y: auto; padding: .75rem; white-space: pre-wrap; }
+  .row { display: flex; gap: .5rem; margin-top: .6rem; align-items: center; }
+  input { padding: .45rem; font: inherit; flex: 1; min-width: 0; }
+  button { padding: .45rem .9rem; font: inherit; cursor: pointer; }
+  label { color: #666; min-width: 5rem; }
+  fieldset { border: 1px solid #ddd; border-radius: 6px; margin: 0 0 .9rem; padding: .5rem .9rem .9rem; }
+  legend { color: #888; font-size: .85em; padding: 0 .4rem; }
+  .sent { color: #0a7; } .recv { color: #06c; } .sys { color: #888; } .err { color: #c00; } .ok { color: #070; }
+  #token { font-size: .8em; color: #666; }
 </style>
 
-<h1>slice 5 test client</h1>
+<h1>slice 8 test client</h1>
 <p class="sys">
-  Run <code>npm run seed</code> for ids. Start two servers —
-  <code>PORT=8101 npm run dev</code> and <code>PORT=8102 npm run dev</code> — then open this
-  file in two tabs: Alice on port <b>8101</b>, Bob on port <b>8102</b>, same chatId. They are
-  on different server instances, so a message only crosses if the Redis backplane works.
+  The WebSocket no longer accepts a userId. You must <b>Login</b> first to get a token,
+  and the token is what the handshake verifies. Register once, then login.
 </p>
 
-<div class="row">
-  <label>userId</label>
-  <input id="user" value="000000000000000000000001" />
-  <label style="min-width:2.5rem">port</label>
-  <input id="port" value="8101" style="flex:none; width:5rem" />
-  <button id="connect">Connect</button>
-</div>
+<fieldset>
+  <legend>1 · get a token</legend>
+  <div class="row">
+    <label>username</label><input id="u" value="denis" />
+    <label>password</label><input id="p" type="password" value="hunter2pw" />
+  </div>
+  <div class="row">
+    <button id="register">Register</button>
+    <button id="login">Login</button>
+    <label style="min-width:2.5rem">port</label>
+    <input id="port" value="8101" style="flex:none; width:5rem" />
+  </div>
+  <div class="row"><span id="token">no token yet</span></div>
+</fieldset>
+
+<fieldset>
+  <legend>2 · connect and chat</legend>
+  <div class="row">
+    <button id="connect" disabled>Connect</button>
+    <label>chatId</label><input id="chat" value="" placeholder="24-hex from npm run seed" />
+  </div>
+</fieldset>
 
 <div class="row"><div id="log" style="flex:1"></div></div>
 
@@ -34,71 +50,87 @@
   <input id="body" value="hello world" />
   <button id="send" disabled>Send</button>
 </div>
-<p class="sys">
-  chatId <input id="chat" value="0000000000000000000000ff" style="flex:none; width:16rem" />
-  &nbsp; <label style="min-width:0"><input type="checkbox" id="spoof" style="flex:none" /> try to spoof senderId</label>
-</p>
 
 <script>
   let ws = null;
+  let token = null;
+
+  const el = (id) => document.getElementById(id);
+  const base = () => `http://localhost:${el("port").value.trim() || "8080"}`;
 
   const log = (msg, cls = "sys") => {
-    const el = document.createElement("div");
-    el.className = cls;
-    el.textContent = `${new Date().toLocaleTimeString()}  ${msg}`;
-    document.getElementById("log").append(el);
-    el.scrollIntoView();
+    const d = document.createElement("div");
+    d.className = cls;
+    d.textContent = `${new Date().toLocaleTimeString()}  ${msg}`;
+    el("log").append(d);
+    d.scrollIntoView();
   };
 
-  document.getElementById("connect").onclick = () => {
-    const userId = document.getElementById("user").value.trim();
-    if (!userId) return log("enter a userId first", "err");
+  // POST JSON to the HTTP side of the same server the WebSocket uses.
+  async function post(path, payload) {
+    const r = await fetch(base() + path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    return { status: r.status, body: await r.json().catch(() => ({})) };
+  }
 
+  el("register").onclick = async () => {
+    const { status, body } = await post("/register", {
+      username: el("u").value.trim(),
+      password: el("p").value,
+    });
+    log(`register -> ${status} ${JSON.stringify(body)}`, status === 201 ? "ok" : "err");
+  };
+
+  el("login").onclick = async () => {
+    const { status, body } = await post("/login", {
+      username: el("u").value.trim(),
+      password: el("p").value,
+    });
+    if (status !== 200) {
+      token = null;
+      el("token").textContent = "no token yet";
+      el("connect").disabled = true;
+      return log(`login -> ${status} ${JSON.stringify(body)}`, "err");
+    }
+    // The server keeps no copy. Holding this string IS being authenticated, so
+    // where a real client puts it matters — localStorage is readable by any script
+    // on the page; an HttpOnly cookie is not. Here it just lives in a variable,
+    // which means a page refresh loses it.
+    token = body.token;
+    el("token").textContent = "token: " + token.slice(0, 28) + "… (" + token.length + " chars)";
+    el("connect").disabled = false;
+    log("login -> 200, token stored in memory", "ok");
+  };
+
+  el("connect").onclick = () => {
+    if (!token) return log("login first", "err");
     if (ws) ws.close();
 
-    // Identity goes in the query string of the UPGRADE REQUEST — the one moment
-    // this connection is still HTTP. Note the scheme is ws://, not http://.
-    // Slice 5: the port is editable so two tabs can point at two different server
-    // instances — which is the whole point of the Redis backplane.
-    const port = document.getElementById("port").value.trim() || "8080";
-    ws = new WebSocket(`ws://localhost:${port}/?userId=${encodeURIComponent(userId)}`);
+    // The token goes in the query string because the browser's WebSocket API
+    // cannot set an Authorization header.
+    const port = el("port").value.trim() || "8080";
+    ws = new WebSocket(`ws://localhost:${port}/?token=${encodeURIComponent(token)}`);
 
-    ws.onopen = () => {
-      log(`connected as ${userId} on port ${port}`, "sys");
-      document.getElementById("send").disabled = false;
-    };
+    ws.onopen = () => { log(`connected on port ${port}`, "ok"); el("send").disabled = false; };
     ws.onclose = (e) => {
-      // The server closes with 1008 when the userId is missing or malformed.
       log(`disconnected${e.reason ? " — " + e.reason : ""} (code ${e.code})`,
           e.code === 1008 ? "err" : "sys");
-      document.getElementById("send").disabled = true;
+      el("send").disabled = true;
     };
     ws.onerror = () => log("socket error — is the server running?", "err");
     ws.onmessage = (e) => {
-      const msg = JSON.parse(e.data);
-      // Slice 3: messages now arrive from OTHER tabs too, so label the sender.
-      const mine = msg.senderId === document.getElementById("user").value.trim();
-      log(`recv  ${mine ? "(you)  " : "(them) "}${msg.body}`, "recv");
+      const m = JSON.parse(e.data);
+      log(`recv  ${m.body}`, "recv");
       log(`      ${e.data}`, "recv");
     };
   };
 
-  document.getElementById("send").onclick = () => {
+  el("send").onclick = () => {
     if (!ws || ws.readyState !== WebSocket.OPEN) return log("not connected", "err");
-
-    // No senderId — the server knows who we are from the handshake.
-    const payload = {
-      chatId: document.getElementById("chat").value.trim(),
-      body: document.getElementById("body").value,
-    };
-
-    // Tick the spoof box to deliberately lie about who you are. The server must
-    // ignore this and store the handshake id instead.
-    if (document.getElementById("spoof").checked) {
-      payload.senderId = "0000000000000000000000ee";
-      log("spoofing senderId as 0000000000000000000000ee", "err");
-    }
-
+    const payload = { chatId: el("chat").value.trim(), body: el("body").value };
     ws.send(JSON.stringify(payload));
     log(`sent  ${JSON.stringify(payload)}`, "sent");
   };
