@@ -28,15 +28,22 @@ with `bcrypt.compare` and returns a JWT signed with `JWT_SECRET` (7-day expiry);
 401 is returned for a wrong password and an unknown username so the endpoint cannot be used
 to enumerate accounts. Slice 8 = the WebSocket handshake takes `?token=` and verifies it
 with `jwt.verify`, so `?userId=` no longer works at all; `senderId` now comes from a signed
-claim rather than a client assertion. `npm run seed` creates real accounts (alice, bob in a
-chat; carol outside it — all password `hunter2pw`). `npm run seed` creates a chat and prints ids for test tabs.
+claim rather than a client assertion. Slice 9 = the inbox: a note row per
+participant is written when a message is sent, torn up by whichever instance delivers it,
+and whatever remains is flushed to that user on their next connect — so offline delivery
+works, and works across instances because the inbox lives in Mongo rather than process
+memory. A 7-day TTL index sweeps notes nobody collected. `npm run seed` creates real
+accounts (alice, bob in a chat; carol outside it — all password `hunter2pw`). `npm run seed` creates a chat and prints ids for test tabs.
 Running Node 24. No remote yet.
 
 **Slices are ONE concept each** — this was re-cut on 2026-09-30 after a first attempt at
 slice 2 bundled six concepts and had to be rolled back (parked at `84aa8f1` on
-`slice-2-routing`). Remaining order: the inbox (offline delivery — a message to a
-disconnected user is persisted but never reaches them), presence, groups, plus deferred
-items 4 and 5 in DESIGN.md. Then inbox
+`slice-2-routing`). Remaining to SHIP (agreed 2026-10-16): slice 10 = a history
+endpoint (`GET /chats/:id/messages` — messages are persisted but unreadable, so a refresh
+shows nothing); slice 11 = a minimal React UI; slice 12 = deploy to Railway/Vercel and
+rewrite the README as the architecture story. Deliberately CUT from v1: presence/last-seen,
+groups (a chat with 3+ participants already works — only a creation endpoint is missing),
+delivery receipts, heartbeat, deferred items 4 and 5. Then inbox
 (offline delivery), presence, groups. Slices 7-8 close the deferred items 1-2 and are the
 biggest real gap: today anyone who knows a userId can be that user, and userIds are
 public (they appear in every message's `senderId`). See also "Deferred work" in DESIGN.md. `Chat` has no `type` field on purpose — derivable from

@@ -28,6 +28,13 @@ export const CHANNEL = "chat:messages";
  */
 export interface BusMessage {
   participantIds: string[];
+
+  /**
+   * The message's own _id, carried separately so a subscriber can tear up the right
+   * inbox note without reading fields off `message` — which is `unknown` on purpose.
+   */
+  messageId: string;
+
   message: unknown;
 }
 
