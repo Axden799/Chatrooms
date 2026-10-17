@@ -38,9 +38,12 @@ Running Node 24. No remote yet.
 
 **Slices are ONE concept each** — this was re-cut on 2026-09-30 after a first attempt at
 slice 2 bundled six concepts and had to be rolled back (parked at `84aa8f1` on
-`slice-2-routing`). Remaining to SHIP (agreed 2026-10-16): slice 10 = a history
-endpoint (`GET /chats/:id/messages` — messages are persisted but unreadable, so a refresh
-shows nothing); slice 11 = a minimal React UI; slice 12 = deploy to Railway/Vercel and
+`slice-2-routing`). Slice 10 = `GET /chats/:id/messages`, participant-gated,
+newest-first, capped limit; the token comes from an `Authorization: Bearer` header here
+(the WebSocket still uses the query string, since a browser cannot set WS headers), so
+token verification is split into `verifyToken` plus a reader per transport.
+
+Remaining to SHIP (agreed 2026-10-16): slice 11 = a minimal React UI; slice 12 = deploy to Railway/Vercel and
 rewrite the README as the architecture story. Deliberately CUT from v1: presence/last-seen,
 groups (a chat with 3+ participants already works — only a creation endpoint is missing),
 delivery receipts, heartbeat, deferred items 4 and 5. Then inbox

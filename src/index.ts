@@ -26,16 +26,13 @@ import { connectToRedis, disconnectFromRedis, CHANNEL, type BusMessage } from ".
  */
 
 /**
- * Verify `?token=` and return the user id it proves, or null to refuse the connection.
+ * Verify a raw token string and return the user id it proves, or null.
  *
- * The token is in the query string because a browser's WebSocket API cannot set
- * headers. jwt.verify throws (bad signature, wrong secret, not a JWT, expired), hence
- * the try/catch; the client is not told which, since that is useful to an attacker.
- * verify returns `string | JwtPayload`, so the union is narrowed before reading .sub.
+ * jwt.verify throws (bad signature, wrong secret, not a JWT, expired), hence the
+ * try/catch; callers are not told which, since that is useful to an attacker. verify
+ * returns `string | JwtPayload`, so the union is narrowed before reading .sub.
  */
-function userIdFromToken(req: IncomingMessage): Types.ObjectId | null {
-  const url = new URL(req.url ?? "/", "http://placeholder");
-  const token = url.searchParams.get("token");
+function verifyToken(token: string | null | undefined): Types.ObjectId | null {
   if (!token) return null;
   try {
     const payload = jwt.verify(token, config.jwtSecret);
@@ -46,6 +43,26 @@ function userIdFromToken(req: IncomingMessage): Types.ObjectId | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * WebSocket handshake: the token rides in the query string, because a browser's
+ * WebSocket API cannot set headers.
+ */
+function userIdFromQuery(req: IncomingMessage): Types.ObjectId | null {
+  const url = new URL(req.url ?? "/", "http://placeholder");
+  return verifyToken(url.searchParams.get("token"));
+}
+
+/**
+ * HTTP requests: the token rides in `Authorization: Bearer <token>`, which is the
+ * convention for HTTP and avoids putting a credential in a URL where it would be
+ * written to server logs and browser history.
+ */
+function userIdFromHeader(req: Request): Types.ObjectId | null {
+  const header = req.headers.authorization;
+  if (!header?.startsWith("Bearer ")) return null;
+  return verifyToken(header.slice("Bearer ".length));
 }
 
 async function main(): Promise<void> {
@@ -119,6 +136,23 @@ async function main(): Promise<void> {
     res.json({ token });
   });
 
+  // Read a chat's history, newest first. Four distinct failures: 400 malformed id,
+  // 401 unknown caller, 403 known caller who may not read this chat, 404 no such chat.
+  //
+  // req.params.id is typed `string | string[] | undefined` — Express 5 allows a param
+  // to match multiple segments, and noUncheckedIndexedAccess adds the undefined — so
+  // it is narrowed with typeof before use.
+  //
+  // The limit is capped: without it, ?limit=999999 lets any client ask the server to
+  // load a whole chat into memory. This query is served entirely by the index declared
+  // in Message.ts ({ chatId: 1, serverTimestamp: -1 }) — IXSCAN with no SORT stage,
+  // examining only as many documents as it returns.
+  //
+  // NOT included: a cursor for paging further back than the most recent n.
+
+
+  // -------------------------------------------------------------------------
+
   // `server:` rather than `port:` — ws attaches to the HTTP server instead of binding
   // its own port, so both protocols share one.
   const httpServer = createServer(app);
@@ -151,7 +185,7 @@ async function main(): Promise<void> {
   })
 
   wss.on("connection", async (socket, req: IncomingMessage) => {
-    const userId = userIdFromToken(req);
+    const userId = userIdFromQuery(req);
     if (!userId) { 
       socket.close(1008, "a valid token query parameter is required");
       return;
