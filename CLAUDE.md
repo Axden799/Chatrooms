@@ -43,8 +43,9 @@ newest-first, capped limit; the token comes from an `Authorization: Bearer` head
 (the WebSocket still uses the query string, since a browser cannot set WS headers), so
 token verification is split into `verifyToken` plus a reader per transport.
 
-Remaining to SHIP (agreed 2026-10-16): slice 11 = a minimal React UI; slice 12 = deploy to Railway/Vercel and
-rewrite the README as the architecture story. Deliberately CUT from v1: presence/last-seen,
+Remaining to SHIP: slice 11 = the React UI, split into
+11-0 (backend prep) through 11g — see the table in DESIGN.md; slice 12 = deploy to
+Railway/Vercel and rewrite the README as the architecture story. Deliberately CUT from v1: presence/last-seen,
 groups (a chat with 3+ participants already works — only a creation endpoint is missing),
 delivery receipts, heartbeat, deferred items 4 and 5. Then inbox
 (offline delivery), presence, groups. Slices 7-8 close the deferred items 1-2 and are the
@@ -79,7 +80,11 @@ https://www.hellointerview.com/learn/system-design/problem-breakdowns/whatsapp
 - **Redis Pub/Sub** — backplane routing messages between server instances (the marquee scaling story)
 - **Redis** — presence (connected-user set) + last-seen timestamps
 - **MongoDB + Mongoose** — persistence for users, chats, messages, inbox (NEW)
-- **React (Vite)** — frontend (reused from prior projects)
+- **React (Vite)** — frontend. **A primary learning surface, NOT reinforcement** (revised
+  2026-10-17): Denis does not retain React from earlier tutorials and is targeting
+  full-stack roles. Teach it piece by piece — slice 11 is split into eight. The big jump is
+  the render model: a component function runs again on every state change, unlike a server
+  handler that runs once per event. See DESIGN.md.
 - **Docker / Docker Compose** — multi-service local stack (reused)
 - **Railway + Vercel** — phase-1 deploy (reused); **AWS** is the phase-2 stretch (doubles as SAA prep)
 

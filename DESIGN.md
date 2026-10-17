@@ -32,7 +32,7 @@ https://www.hellointerview.com/learn/system-design/problem-breakdowns/whatsapp
 | Cross-server routing | **Redis Pub/Sub** backplane | NEW structure, reused tool |
 | Presence / last-seen | **Redis** (connected-user set + timestamps) | reused tool |
 | Persistence | **MongoDB + Mongoose** (ODM gives schemas + TS types) | NEW |
-| Frontend | **React** (Vite) | reused |
+| Frontend | **React** (Vite) | **NEW as of 2026-10-17** — see note below |
 | Containerization | **Docker / Docker Compose** | reused |
 | Deploy — phase 1 | **Railway (backend) + Vercel (frontend)** | reused |
 | Deploy — phase 2 (later) | **AWS** (ECS Fargate + DocumentDB/Atlas + ElastiCache + ALB + S3/CloudFront) — doubles as hands-on AWS SAA prep | NEW, deferred |
@@ -41,6 +41,38 @@ https://www.hellointerview.com/learn/system-design/problem-breakdowns/whatsapp
 Reused so Denis doesn't forget: Redis, Docker, Railway/Vercel, React, API design, TTL
 retention, testing, config/env. New: WebSockets, Redis Pub/Sub, Node/TS, Mongo/Mongoose,
 presence, the inbox/offline pattern, WS auth.
+
+## React is a primary learning surface, not reinforcement
+
+Revised 2026-10-17. This doc originally listed React as "reused" on the assumption Denis
+would carry it over from `pern-stack-tutorial`. He does not: "i hardly remember react from
+my other tutorials." He is targeting **full-stack** roles, so the frontend is a real gap to
+close rather than a box to tick.
+
+His own framing, and it is the right one: a month of TypeScript on this backend transfers
+directly — types, async/await, .map, destructuring, arrow functions, fetch, callbacks
+registered for later. JSX is new syntax, but the *language* underneath is familiar.
+
+So slice 11 is split into eight small slices, each teaching one React concept and building
+one visible thing:
+
+| | React concept | Output |
+|---|---|---|
+| 11-0 | *(backend)* | `GET /chats` + CORS |
+| 11a | how React renders · JSX | a page with static content |
+| 11b | `useState` · controlled inputs | typing updates the screen |
+| 11c | async in an event handler · error state | real login, token in state |
+| 11d | `useEffect` · dependency array · lists + keys | chats appear after login |
+| 11e | props · lifting state up | click a chat, see its messages |
+| 11f | `useEffect` **cleanup** · stale closures | messages arrive live |
+| 11g | callbacks down | send a message |
+
+11f is the hard one — cleanup functions and stale closures are where React and WebSockets
+genuinely fight, and a good interview topic.
+
+**The big conceptual jump is the render model.** On the server a handler runs once per
+event. In React the component function runs again on every state change. Do not assume
+that is understood.
 
 ## Scope: KEEP / SIMPLIFY / CUT
 
