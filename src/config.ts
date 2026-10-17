@@ -26,4 +26,16 @@ export const config = {
    * a valid token for any user. Better to refuse to boot.
    */
   jwtSecret: required("JWT_SECRET"),
+
+  /**
+   * Which browser origins may call this API. Comma-separated.
+   *
+   * A browser refuses to let page A read a response from server B unless B says it is
+   * allowed — so without this, the Vite dev server on :5173 cannot reach :8080 at all.
+   * An allowlist rather than `*` because these requests carry a bearer token.
+   */
+  corsOrigins: (process.env.CORS_ORIGINS ?? "http://localhost:5173")
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean),
 } as const;

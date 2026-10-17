@@ -149,6 +149,40 @@ async function main(): Promise<void> {
   // examining only as many documents as it returns.
   //
   // NOT included: a cursor for paging further back than the most recent n.
+  app.get("/chats/:id/messages", async (req: Request, res: Response) => {
+    const userId = userIdFromHeader(req);
+    if (!userId) {
+      res.status(401).json({ error: "a Bearer token is required"});
+      return;
+    }
+
+    const chatId = req.params.id
+    if (typeof chatId !== "string" || !Types.ObjectId.isValid(chatId)) {
+      res.status(400).json({ error: "invalid chat id" });
+      return;
+    }
+
+    const chat = await ChatModel.findById(chatId);
+    if (!chat) {
+      res.status(404).json({ error: "could not find chat" });
+      return;
+    }
+
+    const isParticipant = chat.participantIds.some(
+      (i) => i.toString() === userId.toString(),
+    );
+    if (!isParticipant) {
+      res.status(403).json({ error: "not a participant of this chat" });
+      return;
+    }
+
+    const limit = Math.min(Number(req.query.limit) || 50, 100);
+    const messages = await MessageModel.find({ chatId: chat._id })
+      .sort({ serverTimestamp: -1 })
+      .limit(limit);
+    res.json({ messages });
+  });
+
 
 
   // -------------------------------------------------------------------------
