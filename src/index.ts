@@ -1,5 +1,6 @@
 import { WebSocketServer, WebSocket } from "ws";
 import express, { type Request, type Response } from "express";
+import cors from "cors";
 import { createServer } from "node:http";
 import type { IncomingMessage } from "node:http";
 import { Types } from "mongoose";
@@ -71,6 +72,13 @@ async function main(): Promise<void> {
 
   // express.json() is middleware that parses request bodies into req.body.
   const app = express();
+
+  // Browsers refuse to let a page on one origin read a response from another unless the
+  // server opts in. The Vite dev server runs on :5173 and this API on :8080, so without
+  // this every frontend request fails before any route is reached. An allowlist rather
+  // than `*`, because these requests carry a bearer token.
+  app.use(cors({ origin: config.corsOrigins }));
+
   app.use(express.json());
 
   // Railway and similar platforms poll a health endpoint to decide if this instance
@@ -134,6 +142,28 @@ async function main(): Promise<void> {
       { expiresIn: "7d" }
     );
     res.json({ token });
+  });
+
+  // The chats this user belongs to. No authorization check is needed, unlike
+  // GET /chats/:id/messages: the filter IS the permission check, since the query only
+  // returns chats containing this user.
+  //
+  // participantIds is an array field. Comparing an array field to a SINGLE value
+  // matches when any element equals it, so this means "chats that include me".
+  // { participantIds: [userId] } would instead mean "a chat whose member list is
+  // exactly and only me" — plain equality, list against list — and match nothing.
+  // ($in is the opposite case: many values you supply against a single-valued field.)
+  //
+  // Returns participantIds, not usernames; resolving those is left for slice 11d.
+  app.get("/chats", async (req: Request, res: Response) => {
+    const userId = userIdFromHeader(req);
+    if (!userId) {
+      res.status(401).json({ error: "A bearer token is required" });
+      return;
+    }
+    const chats = await ChatModel.find({ participantIds: userId })
+      .sort({ createdAt: -1 });
+    res.json({ chats });
   });
 
   // Read a chat's history, newest first. Four distinct failures: 400 malformed id,

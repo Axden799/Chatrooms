@@ -43,8 +43,10 @@ newest-first, capped limit; the token comes from an `Authorization: Bearer` head
 (the WebSocket still uses the query string, since a browser cannot set WS headers), so
 token verification is split into `verifyToken` plus a reader per transport.
 
-Remaining to SHIP: slice 11 = the React UI, split into
-11-0 (backend prep) through 11g — see the table in DESIGN.md; slice 12 = deploy to
+Slice 11-0 = `GET /chats` (the chats you belong to) + CORS
+with an origin allowlist, so a browser frontend can reach the API at all.
+
+Remaining to SHIP: slice 11a through 11g — see the table in DESIGN.md; slice 12 = deploy to
 Railway/Vercel and rewrite the README as the architecture story. Deliberately CUT from v1: presence/last-seen,
 groups (a chat with 3+ participants already works — only a creation endpoint is missing),
 delivery receipts, heartbeat, deferred items 4 and 5. Then inbox
