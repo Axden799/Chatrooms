@@ -52,7 +52,11 @@ Slice 11a = the Vite/React frontend exists in `frontend/`
 HARD FAILS on the Homebrew Node 21 with an ERR_INVALID_ARG_VALUE from inside rolldown, so
 `engines` was added to `frontend/package.json` to make that a clear npm warning instead.
 
-Remaining to SHIP: slice 11b through 11g — see the table in DESIGN.md; slice 12 = deploy to
+Slice 11b = `useState` and controlled inputs; a LoginForm
+holding username/password in state, plus a Counter kept as a worked example of the render
+model.
+
+Remaining to SHIP: slice 11c through 11g — see the table in DESIGN.md; slice 12 = deploy to
 Railway/Vercel and rewrite the README as the architecture story. Deliberately CUT from v1: presence/last-seen,
 groups (a chat with 3+ participants already works — only a creation endpoint is missing),
 delivery receipts, heartbeat, deferred items 4 and 5. Then inbox
