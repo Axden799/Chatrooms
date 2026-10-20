@@ -56,7 +56,12 @@ Slice 11b = `useState` and controlled inputs; a LoginForm
 holding username/password in state, plus a Counter kept as a worked example of the render
 model.
 
-Remaining to SHIP: slice 11c through 11g — see the table in DESIGN.md; slice 12 = deploy to
+Slice 11c = the login form calls `POST /login` for real,
+with loading and error state. Note `import.meta.env` is a BUILD-time text substitution,
+not a runtime lookup (no `process` in a browser), so the API URL is baked into the bundle
+and changing it needs a rebuild — relevant for slice 12's deploy.
+
+Remaining to SHIP: slice 11d through 11g — see the table in DESIGN.md; slice 12 = deploy to
 Railway/Vercel and rewrite the README as the architecture story. Deliberately CUT from v1: presence/last-seen,
 groups (a chat with 3+ participants already works — only a creation endpoint is missing),
 delivery receipts, heartbeat, deferred items 4 and 5. Then inbox

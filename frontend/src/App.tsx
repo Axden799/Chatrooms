@@ -1,6 +1,16 @@
 import { useState } from "react";
 
 /**
+ * Where the backend lives.
+ *
+ * import.meta.env is NOT a runtime lookup — there is no `process` in a browser, so Vite
+ * replaces this text with the literal string at BUILD time. Consequences: changing it
+ * needs a rebuild, and whatever is here ships inside the downloaded JavaScript. That is
+ * why only VITE_-prefixed names are exposed — never put a secret here.
+ */
+const API = import.meta.env.VITE_API_URL ?? "http://localhost:8080";
+
+/**
  * THE RENDER MODEL: a component function runs again, from the top, every time its
  * state changes. On the backend a handler runs once per event; here React re-runs the
  * whole function and compares what it returns to what is on screen. So the body is not
@@ -29,11 +39,41 @@ function Counter() {
     </div>
   );
 }
+
 function LoginForm() {
+
+  const [token, setToken] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+
+  async function handleSubmit(e: React.SubmitEvent) {
+    e.preventDefault();
+    setError(null);
+    setLoading(true);
+
+    try {
+      const res = await fetch(`${API}/login`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ username, password }),
+      });
+      const data = await res.json();
+      if (!res.ok){
+        setError(data.error ?? "login failed");
+        return;
+      }
+      setToken(data.token);
+    } catch {
+      setError("could not reach the server");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
-    <div className="card">
+    <form onSubmit={handleSubmit} className="card">
       <input
         value={username}
         onChange={(e) => setUsername(e.target.value)}
@@ -43,10 +83,12 @@ function LoginForm() {
         value={password}
         onChange={(e) => setPassword(e.target.value)}
         placeholder="password" />
-      <p className="muted">
-        Username is "{username}", password is {password.length} characters.
-      </p>
-    </div>
+      <button type="submit" disabled={loading}>
+        {loading ? "logging in..." : "log in"}
+      </button>
+      {error && <p style={{color: "#c00"}}>{error}</p>}
+      {token && <p className="muted">got a token, {token.length} chars</p>}
+    </form>
   );
 }
 export default function App() {
