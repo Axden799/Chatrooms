@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 /**
  * Where the backend lives.
@@ -40,6 +40,24 @@ function Counter() {
   );
 }
 
+/** What GET /chats returns for each chat. */
+type Chat = {
+  _id: string;
+  participantIds: string[];
+  createdAt: string;
+};
+
+
+/**
+ * Authenticates, and (for now, wrongly) also lists the user's chats — 11e splits these.
+ *
+ * The chat fetch is in a useEffect because the component body runs on EVERY render: a
+ * fetch there would resolve, call setChats, trigger a render, and fetch again forever.
+ * The [token] dependency means it re-runs when token goes from null to a value.
+ *
+ * The effect declares an inner async function rather than being async itself, because
+ * useEffect reserves its return value for a cleanup function (see 11f).
+ */
 function LoginForm() {
 
   const [token, setToken] = useState<string | null>(null);
@@ -47,6 +65,22 @@ function LoginForm() {
   const [error, setError] = useState<string | null>(null);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [chats, setChats] = useState<Chat[]>([]);
+
+  useEffect(() => {
+    if (!token) return;
+    async function load() {
+      const res = await fetch(`${API}/chats`, {
+        headers : { Authorization: `Bearer ${token}` },
+      });
+
+      const data = await res.json();
+      if (res.ok) setChats(data.chats);
+    }
+
+    load();
+  }, [token]);
+
 
   async function handleSubmit(e: React.SubmitEvent) {
     e.preventDefault();
@@ -73,22 +107,34 @@ function LoginForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="card">
-      <input
-        value={username}
-        onChange={(e) => setUsername(e.target.value)}
-        placeholder="username" />
-      <input
-        type="password"
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
-        placeholder="password" />
-      <button type="submit" disabled={loading}>
-        {loading ? "logging in..." : "log in"}
-      </button>
-      {error && <p style={{color: "#c00"}}>{error}</p>}
-      {token && <p className="muted">got a token, {token.length} chars</p>}
-    </form>
+    <>
+      <form onSubmit={handleSubmit} className="card">
+        <input
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          placeholder="username" />
+        <input
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder="password" />
+        <button type="submit" disabled={loading}>
+          {loading ? "logging in..." : "log in"}
+        </button>
+        {error && <p style={{color: "#c00"}}>{error}</p>}
+        {token && <p className="muted">got a token, {token.length} chars</p>}
+      </form>
+
+      {chats.length > 0 && (
+          <ul>
+            {chats.map((c) => (
+              <li key={c._id}>
+                {c._id} - {c.participantIds.length} participants
+              </li>
+            ))}
+          </ul>
+        )}
+    </>
   );
 }
 export default function App() {

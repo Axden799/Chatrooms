@@ -61,7 +61,12 @@ with loading and error state. Note `import.meta.env` is a BUILD-time text substi
 not a runtime lookup (no `process` in a browser), so the API URL is baked into the bundle
 and changing it needs a rebuild — relevant for slice 12's deploy.
 
-Remaining to SHIP: slice 11d through 11g — see the table in DESIGN.md; slice 12 = deploy to
+Slice 11d = `useEffect` with a `[token]` dependency fetching
+`GET /chats`, rendered with `.map` + `key`. Deliberately placed inside LoginForm, which
+now does two unrelated jobs — 11e splits it, so the refactor is motivated by something
+visible rather than asserted.
+
+Remaining to SHIP: slice 11e through 11g — see the table in DESIGN.md; slice 12 = deploy to
 Railway/Vercel and rewrite the README as the architecture story. Deliberately CUT from v1: presence/last-seen,
 groups (a chat with 3+ participants already works — only a creation endpoint is missing),
 delivery receipts, heartbeat, deferred items 4 and 5. Then inbox
