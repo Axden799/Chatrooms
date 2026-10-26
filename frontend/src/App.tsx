@@ -11,6 +11,16 @@ import { useEffect, useState } from "react";
 const API = import.meta.env.VITE_API_URL ?? "http://localhost:8080";
 
 /**
+ * The same server, addressed as a WebSocket.
+ *
+ * http -> ws and https -> wss, which the one replace handles because "https" starts
+ * with "http". Deriving it rather than hardcoding matters for deployment: a page served
+ * over HTTPS cannot open an insecure ws:// connection — browsers block it outright — so
+ * production must be wss://.
+ */
+const WS = API.replace(/^http/, "ws");
+
+/**
  * THE RENDER MODEL: a component function runs again, from the top, every time its
  * state changes. On the backend a handler runs once per event; here React re-runs the
  * whole function and compares what it returns to what is on screen. So the body is not
@@ -150,6 +160,32 @@ function MessageList({ token, chatId }: { token: string; chatId: string }) {
     }
 
     load();
+  }, [token, chatId]);
+
+  // History above, live messages below: two jobs, two effects.
+  //
+  // The token rides in the query string because `new WebSocket(url)` takes only a URL —
+  // the browser owns the handshake headers, so there is nowhere else to put it.
+  useEffect(() => {
+    const ws = new WebSocket(`${WS}/?token=${encodeURIComponent(token)}`);
+
+    ws.onmessage = (e) => {
+      const m: Message = JSON.parse(e.data);
+      // One socket carries every chat this user belongs to — the server delivers to the
+      // USER, not to a chat — so a list showing one chat has to drop the rest.
+      if (m.chatId !== chatId) return;
+      // Updater form, not [...messages, m]: this arrow was created during one run of the
+      // effect and still reads that run's `messages`, which is []. React passes the
+      // current value as `prev`, so nothing stale is read.
+      setMessages((prev) => [...prev, m]);
+    };
+
+    // Returning a function is how an effect says "do this later." React calls it when the
+    // deps change and on unmount. Without it, every chat switch leaks an open socket that
+    // keeps firing setMessages. StrictMode's double-invoke makes that visible immediately.
+    return () => ws.close();
+    // Known cost of [chatId]: switching chats reconnects. The connection is really
+    // per-user, so it belongs in App — a bigger refactor than this slice.
   }, [token, chatId]);
 
   const ordered = [...messages].reverse();
