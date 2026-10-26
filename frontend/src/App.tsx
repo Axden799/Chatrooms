@@ -26,27 +26,7 @@ const API = import.meta.env.VITE_API_URL ?? "http://localhost:8080";
  * show, onChange is the input telling React what changed — so every keystroke is a
  * round trip through state. An input with `value` and no `onChange` is read-only.
  */
-function Counter() {
-  const [count, setCount] = useState(0);
-  console.log("Counter() ran. count =", count);
-  return (
-    <div className="card">
-      <p>
-        count is <strong>{count}</strong>
-      </p>
-      <button onClick={() => setCount(count + 1)}>add one</button>
-      <button onClick={() => setCount(0)}>reset</button>
-    </div>
-  );
-}
-
-/** What GET /chats returns for each chat. */
-type Chat = {
-  _id: string;
-  participantIds: string[];
-  createdAt: string;
-};
-
+// 
 
 /**
  * Authenticates, and (for now, wrongly) also lists the user's chats — 11e splits these.
@@ -58,13 +38,23 @@ type Chat = {
  * The effect declares an inner async function rather than being async itself, because
  * useEffect reserves its return value for a cleanup function (see 11f).
  */
-function LoginForm() {
+/** What GET /chats returns for each chat. */
+type Chat = {
+  _id: string;
+  participantIds: string[];
+  createdAt: string;
+};
 
-  const [token, setToken] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
+/** What GET /chats/:id/messages returns for each message. */
+type Message = {
+  _id: string;
+  chatId: string;
+  senderId: string;
+  body: string;
+  serverTimestamp: string;
+};
+
+function ChatList({ token, onSelect }: { token: string; onSelect: (id: string) => void }) {
   const [chats, setChats] = useState<Chat[]>([]);
 
   useEffect(() => {
@@ -80,6 +70,26 @@ function LoginForm() {
 
     load();
   }, [token]);
+
+  return (
+    <>
+      {chats.length > 0 && (
+        <ul>
+          {chats.map((c) => (
+            <li key={c._id}>
+              <button onClick={() => onSelect(c._id)}>{c._id}</button>{c.participantIds.length} participants
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
+  )}
+
+function LoginForm({ onLogin }: { onLogin: (t: string) => void }) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
 
 
   async function handleSubmit(e: React.SubmitEvent) {
@@ -98,7 +108,7 @@ function LoginForm() {
         setError(data.error ?? "login failed");
         return;
       }
-      setToken(data.token);
+      onLogin(data.token);
     } catch {
       setError("could not reach the server");
     } finally {
@@ -122,28 +132,56 @@ function LoginForm() {
           {loading ? "logging in..." : "log in"}
         </button>
         {error && <p style={{color: "#c00"}}>{error}</p>}
-        {token && <p className="muted">got a token, {token.length} chars</p>}
       </form>
-
-      {chats.length > 0 && (
-          <ul>
-            {chats.map((c) => (
-              <li key={c._id}>
-                {c._id} - {c.participantIds.length} participants
-              </li>
-            ))}
-          </ul>
-        )}
     </>
   );
 }
+
+function MessageList({ token, chatId }: { token: string; chatId: string }) {
+  const [messages, setMessages] = useState<Message[]>([]);
+
+  useEffect(() => {
+    async function load() {
+      const res = await fetch(`${API}/chats/${chatId}/messages`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (res.ok) setMessages(data.messages);
+    }
+
+    load();
+  }, [token, chatId]);
+
+  const ordered = [...messages].reverse();
+
+  return (
+    <ul className="card">
+      {ordered.map((m) => (
+        <li key={m._id}>
+          <strong>{m.senderId.slice(-6)}</strong> {m.body}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export default function App() {
+  const [token, setToken] = useState<string | null>(null);
+  const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
+
   return (
     <div>
       <h1>Chatrooms</h1>
-      <p className="muted">slice 11b — useState</p>
-      <Counter />
-      <LoginForm />
+      <p className="muted">slice 11e — props and lifted state</p>
+        {!token && <LoginForm onLogin={setToken} />}
+        {token && (
+          <>
+            <ChatList token={token} onSelect={setSelectedChatId} />
+            {selectedChatId && (
+              <MessageList token={token} chatId={selectedChatId} />
+            )}
+          </>
+      )}
     </div>
   );
 }

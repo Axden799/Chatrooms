@@ -66,7 +66,11 @@ Slice 11d = `useEffect` with a `[token]` dependency fetching
 now does two unrelated jobs — 11e splits it, so the refactor is motivated by something
 visible rather than asserted.
 
-Remaining to SHIP: slice 11e through 11g — see the table in DESIGN.md; slice 12 = deploy to
+Slice 11e = split into App / LoginForm / ChatList /
+MessageList. App owns `token` and `selectedChatId`; data flows DOWN as props and events
+flow UP as callbacks (`onLogin`, `onSelect`). Clicking a chat loads its history.
+
+Remaining to SHIP: slice 11f (the WebSocket in React) and 11g — see the table in DESIGN.md; slice 12 = deploy to
 Railway/Vercel and rewrite the README as the architecture story. Deliberately CUT from v1: presence/last-seen,
 groups (a chat with 3+ participants already works — only a creation endpoint is missing),
 delivery receipts, heartbeat, deferred items 4 and 5. Then inbox
