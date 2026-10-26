@@ -148,6 +148,46 @@ function LoginForm({ onLogin }: { onLogin: (t: string) => void }) {
 }
 
 /**
+ * The compose box. Knows nothing about sockets, chats, or where the text goes.
+ *
+ * `draft` lives here rather than in App because a state change re-runs the component
+ * that owns it: keeping it local means a keystroke re-renders this form alone, not the
+ * message list. Push state as far down as it goes.
+ *
+ * preventDefault stops the browser's default form behaviour, which is a full page
+ * NAVIGATION — a fresh document, all JavaScript discarded. That would destroy the token,
+ * which lives only in App's state, and log the user out.
+ *
+ * It deliberately does not append to the list. The sent message comes back over the
+ * socket like any other, because the server delivers to every participant including the
+ * sender — so there is one writer to `messages` and one path for every message. The cost
+ * is a round trip before you see your own text; optimistic UI (show it immediately,
+ * reconcile on confirmation) is the alternative and needs temporary ids, a pending
+ * state, and a rollback path.
+ */
+function Composer({ onSend }: { onSend: (body: string) => void }) {
+  const [draft, setDraft] = useState("");
+
+  function handleSubmit(e: React.SubmitEvent) {
+    e.preventDefault();
+    const body = draft.trim();
+    if (!body) return;
+    onSend(body);
+    setDraft("");
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="card">
+      <input
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        placeholder="type a message" />
+      <button type="submit">send</button>
+    </form>
+  );
+}
+
+/**
  * Display only. No state, no fetching, no socket — it renders what it is handed.
  *
  * `messages` holds every message App has seen, across every chat, so the filter happens
@@ -246,16 +286,36 @@ export default function App() {
     load();
   }, [token, selectedChatId]);
 
+  /**
+   * Why the ref exists: `ws` is a const inside the effect above and unreachable here.
+   *
+   * Two ways it can be unusable, hence two checks. Null means no socket yet (before
+   * login) or the cleanup nulled it. Not OPEN means the socket is CONNECTING (0),
+   * CLOSING (2) or CLOSED (3) — .send() throws on anything but OPEN (1), and submitting
+   * during the handshake is genuinely reachable.
+   *
+   * senderId is deliberately absent from the payload. The server takes it from the
+   * verified token on the connection, so a client cannot claim to be someone else.
+   */
+  function send(body: string) {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ chatId: selectedChatId, body }));
+  }
+
   return (
     <div>
       <h1>Chatrooms</h1>
-      <p className="muted">slice 11g — useRef and the socket in App</p>
+      <p className="muted">slice 11h — sending</p>
       {!token && <LoginForm onLogin={setToken} />}
       {token && (
         <>
           <ChatList token={token} onSelect={setSelectedChatId} />
           {selectedChatId && (
-            <MessageList messages={messages} chatId={selectedChatId} />
+            <>
+              <MessageList messages={messages} chatId={selectedChatId} />
+              <Composer onSend={send} />
+            </>
           )}
         </>
       )}
