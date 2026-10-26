@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 /**
  * Where the backend lives.
@@ -147,48 +147,23 @@ function LoginForm({ onLogin }: { onLogin: (t: string) => void }) {
   );
 }
 
-function MessageList({ token, chatId }: { token: string; chatId: string }) {
-  const [messages, setMessages] = useState<Message[]>([]);
-
-  useEffect(() => {
-    async function load() {
-      const res = await fetch(`${API}/chats/${chatId}/messages`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await res.json();
-      if (res.ok) setMessages(data.messages);
-    }
-
-    load();
-  }, [token, chatId]);
-
-  // History above, live messages below: two jobs, two effects.
-  //
-  // The token rides in the query string because `new WebSocket(url)` takes only a URL —
-  // the browser owns the handshake headers, so there is nowhere else to put it.
-  useEffect(() => {
-    const ws = new WebSocket(`${WS}/?token=${encodeURIComponent(token)}`);
-
-    ws.onmessage = (e) => {
-      const m: Message = JSON.parse(e.data);
-      // One socket carries every chat this user belongs to — the server delivers to the
-      // USER, not to a chat — so a list showing one chat has to drop the rest.
-      if (m.chatId !== chatId) return;
-      // Updater form, not [...messages, m]: this arrow was created during one run of the
-      // effect and still reads that run's `messages`, which is []. React passes the
-      // current value as `prev`, so nothing stale is read.
-      setMessages((prev) => [...prev, m]);
-    };
-
-    // Returning a function is how an effect says "do this later." React calls it when the
-    // deps change and on unmount. Without it, every chat switch leaks an open socket that
-    // keeps firing setMessages. StrictMode's double-invoke makes that visible immediately.
-    return () => ws.close();
-    // Known cost of [chatId]: switching chats reconnects. The connection is really
-    // per-user, so it belongs in App — a bigger refactor than this slice.
-  }, [token, chatId]);
-
-  const ordered = [...messages].reverse();
+/**
+ * Display only. No state, no fetching, no socket — it renders what it is handed.
+ *
+ * `messages` holds every message App has seen, across every chat, so the filter happens
+ * HERE rather than in App's socket handler. Render-time code reads current props on every
+ * render; a handler created inside an effect reads the values from the one run that
+ * created it. Filtering in the handler would compare against a frozen chatId.
+ *
+ * Sorted rather than reversed: history arrives newest-first and live messages append to
+ * the end, so a plain .reverse() puts the newest live message at the top. serverTimestamp
+ * is an ISO-8601 string, and ISO-8601 sorts correctly as text, so comparing the strings
+ * is the same as comparing the dates.
+ */
+function MessageList({ messages, chatId }: { messages: Message[]; chatId: string }) {
+  const ordered = messages
+    .filter((m) => m.chatId === chatId)
+    .sort((a, b) => a.serverTimestamp.localeCompare(b.serverTimestamp));
 
   return (
     <ul className="card">
@@ -204,19 +179,85 @@ function MessageList({ token, chatId }: { token: string; chatId: string }) {
 export default function App() {
   const [token, setToken] = useState<string | null>(null);
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
+  // Messages live here now, not in MessageList: 11h sends from a form, and the form and
+  // the socket have to be reachable from the same place.
+  const [messages, setMessages] = useState<Message[]>([]);
+
+  /**
+   * A box that survives re-renders without causing one.
+   *
+   * useRef hands back the SAME { current } object every render, so a value put in it
+   * persists — a plain `const` in the component body is a fresh variable every call.
+   * Writing .current does not re-render, which is the point: nothing on screen depends
+   * on the socket object, so a render would be wasted. useState for what the screen
+   * reads, useRef for what the code holds onto.
+   *
+   * Null until the effect below runs — on the first render no socket exists yet.
+   */
+  const wsRef = useRef<WebSocket | null>(null);
+
+  /**
+   * One socket per LOGIN, not per chat — which is why the deps are [token] alone.
+   *
+   * The cost of that: `selectedChatId` inside onmessage is frozen at the value it had
+   * when this ran, so App cannot filter by chat here. It stores every arriving message
+   * and MessageList filters at render time, where props are current.
+   *
+   * The guard is inside because hooks run in call order and cannot be skipped
+   * conditionally. Returning undefined instead of a cleanup is allowed.
+   */
+  useEffect(() => {
+    if (!token) return;
+    const ws = new WebSocket(`${WS}/?token=${encodeURIComponent(token)}`);
+    // The assignment is the whole point: it makes the socket reachable from outside this
+    // effect, which is what lets the compose form send. Nulled in cleanup so a dead
+    // socket is never handed to send().
+    wsRef.current = ws;
+
+    ws.onmessage = (e) => {
+      const m: Message = JSON.parse(e.data);
+      setMessages((prev) => [...prev, m]);
+    };
+
+    return (() => {
+      ws.close();
+      wsRef.current = null;
+    });
+  }, [token]);
+
+  // History for the selected chat. Boilerplate — this is the effect you already wrote,
+  // moved up and with setMessages now pointing at App's state.
+  //
+  // It REPLACES rather than appends. Mongo is the source of truth, so a refetch already
+  // contains anything that arrived live for this chat; replacing cannot lose a message
+  // and cannot duplicate one. Known narrow race left in place: a live message arriving
+  // while this fetch is in flight can appear twice.
+  useEffect(() => {
+    if (!token || !selectedChatId) return;
+
+    async function load() {
+      const res = await fetch(`${API}/chats/${selectedChatId}/messages`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (res.ok) setMessages(data.messages);
+    }
+
+    load();
+  }, [token, selectedChatId]);
 
   return (
     <div>
       <h1>Chatrooms</h1>
-      <p className="muted">slice 11e — props and lifted state</p>
-        {!token && <LoginForm onLogin={setToken} />}
-        {token && (
-          <>
-            <ChatList token={token} onSelect={setSelectedChatId} />
-            {selectedChatId && (
-              <MessageList token={token} chatId={selectedChatId} />
-            )}
-          </>
+      <p className="muted">slice 11g — useRef and the socket in App</p>
+      {!token && <LoginForm onLogin={setToken} />}
+      {token && (
+        <>
+          <ChatList token={token} onSelect={setSelectedChatId} />
+          {selectedChatId && (
+            <MessageList messages={messages} chatId={selectedChatId} />
+          )}
+        </>
       )}
     </div>
   );
