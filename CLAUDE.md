@@ -43,8 +43,34 @@ newest-first, capped limit; the token comes from an `Authorization: Bearer` head
 (the WebSocket still uses the query string, since a browser cannot set WS headers), so
 token verification is split into `verifyToken` plus a reader per transport.
 
-Remaining to SHIP: slice 11 = the React UI, split into
-11-0 (backend prep) through 11g — see the table in DESIGN.md; slice 12 = deploy to
+Slice 11-0 = `GET /chats` (the chats you belong to) + CORS
+with an origin allowlist, so a browser frontend can reach the API at all.
+
+Slice 11a = the Vite/React frontend exists in `frontend/`
+(its own package.json, React 19 + Vite 8, `cd frontend && npm run dev` on :5173). Note
+`frontend/` has no `.nvmrc` of its own — `nvm use` walks up to the repo root — and Vite 8
+HARD FAILS on the Homebrew Node 21 with an ERR_INVALID_ARG_VALUE from inside rolldown, so
+`engines` was added to `frontend/package.json` to make that a clear npm warning instead.
+
+Slice 11b = `useState` and controlled inputs; a LoginForm
+holding username/password in state, plus a Counter kept as a worked example of the render
+model.
+
+Slice 11c = the login form calls `POST /login` for real,
+with loading and error state. Note `import.meta.env` is a BUILD-time text substitution,
+not a runtime lookup (no `process` in a browser), so the API URL is baked into the bundle
+and changing it needs a rebuild — relevant for slice 12's deploy.
+
+Slice 11d = `useEffect` with a `[token]` dependency fetching
+`GET /chats`, rendered with `.map` + `key`. Deliberately placed inside LoginForm, which
+now does two unrelated jobs — 11e splits it, so the refactor is motivated by something
+visible rather than asserted.
+
+Slice 11e = split into App / LoginForm / ChatList /
+MessageList. App owns `token` and `selectedChatId`; data flows DOWN as props and events
+flow UP as callbacks (`onLogin`, `onSelect`). Clicking a chat loads its history.
+
+Remaining to SHIP: slice 11f (the WebSocket in React) and 11g — see the table in DESIGN.md; slice 12 = deploy to
 Railway/Vercel and rewrite the README as the architecture story. Deliberately CUT from v1: presence/last-seen,
 groups (a chat with 3+ participants already works — only a creation endpoint is missing),
 delivery receipts, heartbeat, deferred items 4 and 5. Then inbox

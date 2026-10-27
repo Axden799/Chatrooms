@@ -1,5 +1,6 @@
 import { WebSocketServer, WebSocket } from "ws";
 import express, { type Request, type Response } from "express";
+import cors from "cors";
 import { createServer } from "node:http";
 import type { IncomingMessage } from "node:http";
 import { Types } from "mongoose";
@@ -13,6 +14,8 @@ import bcrypt from "bcrypt";
 import { MongoServerError } from "mongodb";
 import jwt from "jsonwebtoken";
 import { connectToRedis, disconnectFromRedis, CHANNEL, type BusMessage } from "./bus.js";
+import rateLimit from "express-rate-limit";
+import { RedisStore } from "rate-limit-redis";
 
 /**
  * Chatrooms server. One port serves Express (HTTP) and `ws` (WebSocket) — a request
@@ -71,10 +74,53 @@ async function main(): Promise<void> {
 
   // express.json() is middleware that parses request bodies into req.body.
   const app = express();
+
+  // Browsers refuse to let a page on one origin read a response from another unless the
+  // server opts in. The Vite dev server runs on :5173 and this API on :8080, so without
+  // this every frontend request fails before any route is reached. An allowlist rather
+  // than `*`, because these requests carry a bearer token.
+  app.use(cors({ origin: config.corsOrigins }));
+
   app.use(express.json());
 
+  // Deployed behind Railway's proxy, every request arrives from the proxy, so req.ip is
+  // the proxy's address and the rate limiter below would put all users in one bucket.
+  // This tells Express to read the client address from X-Forwarded-For. The `1` means
+  // trust exactly one hop — `true` would trust the whole header, which a client can
+  // forge to get a fresh bucket per request.
+  app.set("trust proxy", 1);
+
+  /**
+   * Rate limit on the unauthenticated endpoints.
+   *
+   * These are the two routes anyone can call without a token, and bcrypt at cost 10 is
+   * ~100ms of CPU per call by design — which makes an open /register or /login a cheap
+   * way to saturate this process, separately from filling the database with junk
+   * accounts.
+   *
+   * The Redis store, not the default in-memory one: the default keeps counters in this
+   * process's memory, so two instances behind a load balancer each allow the full limit
+   * (a user gets 2x) and every restart resets the window. Shared state in Redis is the
+   * same reason the pub/sub backplane exists — instances cannot coordinate through
+   * memory they do not share.
+   *
+   * Reuses bus.pub rather than opening a third connection. Safe because pub is not in
+   * subscriber mode; bus.sub could not run these commands.
+   */
+  const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 30,
+    standardHeaders: "draft-8",
+    legacyHeaders: false,
+    store: new RedisStore({
+      prefix: "rl:auth:",
+      sendCommand: (...args: string[]) => bus.pub.sendCommand(args),
+    }),
+  });
+
   // Railway and similar platforms poll a health endpoint to decide if this instance
-  // should receive traffic.
+  // should receive traffic. Deliberately not rate limited — the platform polls it
+  // constantly, and a 429 here would take the instance out of rotation.
   app.get("/health", (req: Request, res: Response) => {
     res.json({ok: true});
   });
@@ -83,7 +129,7 @@ async function main(): Promise<void> {
   // Password length is checked here because the schema only sees the ~60-char hash.
   // The findOne is a nicer error in the common case; the 11000 handler is the real
   // guarantee, since two simultaneous registrations both see an empty result.
-  app.post("/register", async (req: Request, res: Response) => {
+  app.post("/register", authLimiter, async (req: Request, res: Response) => {
     const { username, password } = req.body;
     if (typeof username !== "string" || typeof password !== "string") {
       res.status(400).json({ error: "username and password must be strings" });
@@ -116,7 +162,7 @@ async function main(): Promise<void> {
   // cannot be used to discover which usernames exist. The token's payload is readable
   // by anyone holding it — the signature is what makes it trustworthy, and the server
   // keeps no copy, which is why any instance can verify it.
-  app.post("/login", async (req: Request, res: Response) => {
+  app.post("/login", authLimiter, async (req: Request, res: Response) => {
     const { username, password } = req.body;
     if (typeof username !== "string" || typeof password !== "string") {
       res.status(400).json({ error: "username and password must be strings" });
@@ -136,6 +182,28 @@ async function main(): Promise<void> {
     res.json({ token });
   });
 
+  // The chats this user belongs to. No authorization check is needed, unlike
+  // GET /chats/:id/messages: the filter IS the permission check, since the query only
+  // returns chats containing this user.
+  //
+  // participantIds is an array field. Comparing an array field to a SINGLE value
+  // matches when any element equals it, so this means "chats that include me".
+  // { participantIds: [userId] } would instead mean "a chat whose member list is
+  // exactly and only me" — plain equality, list against list — and match nothing.
+  // ($in is the opposite case: many values you supply against a single-valued field.)
+  //
+  // Returns participantIds, not usernames; resolving those is left for slice 11d.
+  app.get("/chats", async (req: Request, res: Response) => {
+    const userId = userIdFromHeader(req);
+    if (!userId) {
+      res.status(401).json({ error: "A bearer token is required" });
+      return;
+    }
+    const chats = await ChatModel.find({ participantIds: userId })
+      .sort({ createdAt: -1 });
+    res.json({ chats });
+  });
+
   // Read a chat's history, newest first. Four distinct failures: 400 malformed id,
   // 401 unknown caller, 403 known caller who may not read this chat, 404 no such chat.
   //
@@ -149,6 +217,40 @@ async function main(): Promise<void> {
   // examining only as many documents as it returns.
   //
   // NOT included: a cursor for paging further back than the most recent n.
+  app.get("/chats/:id/messages", async (req: Request, res: Response) => {
+    const userId = userIdFromHeader(req);
+    if (!userId) {
+      res.status(401).json({ error: "a Bearer token is required"});
+      return;
+    }
+
+    const chatId = req.params.id
+    if (typeof chatId !== "string" || !Types.ObjectId.isValid(chatId)) {
+      res.status(400).json({ error: "invalid chat id" });
+      return;
+    }
+
+    const chat = await ChatModel.findById(chatId);
+    if (!chat) {
+      res.status(404).json({ error: "could not find chat" });
+      return;
+    }
+
+    const isParticipant = chat.participantIds.some(
+      (i) => i.toString() === userId.toString(),
+    );
+    if (!isParticipant) {
+      res.status(403).json({ error: "not a participant of this chat" });
+      return;
+    }
+
+    const limit = Math.min(Number(req.query.limit) || 50, 100);
+    const messages = await MessageModel.find({ chatId: chat._id })
+      .sort({ serverTimestamp: -1 })
+      .limit(limit);
+    res.json({ messages });
+  });
+
 
 
   // -------------------------------------------------------------------------

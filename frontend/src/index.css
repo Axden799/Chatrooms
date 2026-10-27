@@ -1,0 +1,30 @@
+:root {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 15px;
+  line-height: 1.5;
+  color: #1a1a1a;
+  background: #fafafa;
+}
+
+body {
+  margin: 0;
+  display: flex;
+  justify-content: center;
+}
+
+#root {
+  width: 100%;
+  max-width: 44rem;
+  padding: 2rem 1.25rem;
+}
+
+h1 { font-size: 1.5rem; margin: 0 0 0.25rem; }
+.muted { color: #666; }
+.card {
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 1rem;
+  background: #fff;
+  margin-top: 1rem;
+}
+code { background: #f0f0f0; padding: 0.1em 0.35em; border-radius: 3px; }
