@@ -237,8 +237,24 @@ function MessageList({ messages, chatId }: { messages: Message[]; chatId: string
   );
 }
 
+/** The localStorage key the token is kept under. */
+const TOKEN_KEY = "chatrooms.token";
+
 export default function App() {
-  const [token, setToken] = useState<string | null>(null);
+  /**
+   * Read the stored token on startup, so a refresh does not log the user out.
+   *
+   * The initial value is passed as a FUNCTION. useState only uses its argument on the
+   * first render, but a plain expression is still evaluated on every one — the function
+   * form means localStorage is read once. (React calls this a lazy initializer.)
+   *
+   * Storage is per origin and survives reloads, tab closes and browser restarts. It is
+   * also readable by any JavaScript on the page, which is the trade-off against an
+   * HttpOnly cookie: simpler, but a script-injection bug could exfiltrate the token.
+   * Acceptable here because React escapes rendered text, so there is no injection path
+   * short of dangerouslySetInnerHTML, and because the demo accounts are public.
+   */
+  const [token, setToken] = useState<string | null>(() => localStorage.getItem(TOKEN_KEY));
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   // Messages live here now, not in MessageList: 11h sends from a form, and the form and
   // the socket have to be reachable from the same place.
@@ -256,6 +272,27 @@ export default function App() {
    * Null until the effect below runs — on the first render no socket exists yet.
    */
   const wsRef = useRef<WebSocket | null>(null);
+
+  /** Store the token alongside the state, so the two never disagree. */
+  function handleLogin(t: string) {
+    localStorage.setItem(TOKEN_KEY, t);
+    setToken(t);
+  }
+
+  /**
+   * Clear everything derived from the identity, storage included.
+   *
+   * Needed because storing the token introduces a state that did not exist before: a
+   * STALE one. The token is signed with a 7-day expiry, but storage has no expiry, so
+   * after a week the app starts up holding a token the server will refuse. Without this
+   * the user would land on a blank page with no way back to the login form.
+   */
+  function logout() {
+    localStorage.removeItem(TOKEN_KEY);
+    setToken(null);
+    setSelectedChatId(null);
+    setMessages([]);
+  }
 
   /**
    * One socket per LOGIN, not per chat — which is why the deps are [token] alone.
@@ -278,6 +315,14 @@ export default function App() {
     ws.onmessage = (e) => {
       const m: Message = JSON.parse(e.data);
       setMessages((prev) => [...prev, m]);
+    };
+
+    // 1008 is the code src/index.ts closes with when the token does not verify, so it is
+    // the one unambiguous "this token is no longer good" signal. Any other close code
+    // (a dropped network, a server restart) is left alone — the token is still valid and
+    // throwing the user out would be wrong.
+    ws.onclose = (e) => {
+      if (e.code === 1008) logout();
     };
 
     return (() => {
@@ -327,10 +372,10 @@ export default function App() {
   return (
     <div>
       <h1>Chatrooms</h1>
-      <p className="muted">slice 11h — sending</p>
-      {!token && <LoginForm onLogin={setToken} />}
+      {!token && <LoginForm onLogin={handleLogin} />}
       {token && (
         <>
+          <button type="button" onClick={logout}>log out</button>
           <ChatList token={token} onSelect={setSelectedChatId} />
           {selectedChatId && (
             <>
