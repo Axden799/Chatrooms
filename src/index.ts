@@ -14,6 +14,8 @@ import bcrypt from "bcrypt";
 import { MongoServerError } from "mongodb";
 import jwt from "jsonwebtoken";
 import { connectToRedis, disconnectFromRedis, CHANNEL, type BusMessage } from "./bus.js";
+import rateLimit from "express-rate-limit";
+import { RedisStore } from "rate-limit-redis";
 
 /**
  * Chatrooms server. One port serves Express (HTTP) and `ws` (WebSocket) — a request
@@ -81,8 +83,44 @@ async function main(): Promise<void> {
 
   app.use(express.json());
 
+  // Deployed behind Railway's proxy, every request arrives from the proxy, so req.ip is
+  // the proxy's address and the rate limiter below would put all users in one bucket.
+  // This tells Express to read the client address from X-Forwarded-For. The `1` means
+  // trust exactly one hop — `true` would trust the whole header, which a client can
+  // forge to get a fresh bucket per request.
+  app.set("trust proxy", 1);
+
+  /**
+   * Rate limit on the unauthenticated endpoints.
+   *
+   * These are the two routes anyone can call without a token, and bcrypt at cost 10 is
+   * ~100ms of CPU per call by design — which makes an open /register or /login a cheap
+   * way to saturate this process, separately from filling the database with junk
+   * accounts.
+   *
+   * The Redis store, not the default in-memory one: the default keeps counters in this
+   * process's memory, so two instances behind a load balancer each allow the full limit
+   * (a user gets 2x) and every restart resets the window. Shared state in Redis is the
+   * same reason the pub/sub backplane exists — instances cannot coordinate through
+   * memory they do not share.
+   *
+   * Reuses bus.pub rather than opening a third connection. Safe because pub is not in
+   * subscriber mode; bus.sub could not run these commands.
+   */
+  const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 30,
+    standardHeaders: "draft-8",
+    legacyHeaders: false,
+    store: new RedisStore({
+      prefix: "rl:auth:",
+      sendCommand: (...args: string[]) => bus.pub.sendCommand(args),
+    }),
+  });
+
   // Railway and similar platforms poll a health endpoint to decide if this instance
-  // should receive traffic.
+  // should receive traffic. Deliberately not rate limited — the platform polls it
+  // constantly, and a 429 here would take the instance out of rotation.
   app.get("/health", (req: Request, res: Response) => {
     res.json({ok: true});
   });
@@ -91,7 +129,7 @@ async function main(): Promise<void> {
   // Password length is checked here because the schema only sees the ~60-char hash.
   // The findOne is a nicer error in the common case; the 11000 handler is the real
   // guarantee, since two simultaneous registrations both see an empty result.
-  app.post("/register", async (req: Request, res: Response) => {
+  app.post("/register", authLimiter, async (req: Request, res: Response) => {
     const { username, password } = req.body;
     if (typeof username !== "string" || typeof password !== "string") {
       res.status(400).json({ error: "username and password must be strings" });
@@ -124,7 +162,7 @@ async function main(): Promise<void> {
   // cannot be used to discover which usernames exist. The token's payload is readable
   // by anyone holding it — the signature is what makes it trustworthy, and the server
   // keeps no copy, which is why any instance can verify it.
-  app.post("/login", async (req: Request, res: Response) => {
+  app.post("/login", authLimiter, async (req: Request, res: Response) => {
     const { username, password } = req.body;
     if (typeof username !== "string" || typeof password !== "string") {
       res.status(400).json({ error: "username and password must be strings" });

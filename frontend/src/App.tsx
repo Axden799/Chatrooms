@@ -95,6 +95,9 @@ function ChatList({ token, onSelect }: { token: string; onSelect: (id: string) =
     </>
   )}
 
+/** Public by design — these accounts exist so anyone can see the project work. */
+const DEMO_PASSWORD = "hunter2pw";
+
 function LoginForm({ onLogin }: { onLogin: (t: string) => void }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -102,19 +105,23 @@ function LoginForm({ onLogin }: { onLogin: (t: string) => void }) {
   const [password, setPassword] = useState("");
 
 
-  async function handleSubmit(e: React.SubmitEvent) {
-    e.preventDefault();
+  /**
+   * Takes the two values as arguments rather than reading them out of state, so the
+   * demo buttons can call it with different ones. The request no longer touches state
+   * at all.
+   */
+  async function login(u: string, p: string) {
     setError(null);
     setLoading(true);
 
     try {
       const res = await fetch(`${API}/login`, {
         method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({ username, password }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: u, password: p }),
       });
       const data = await res.json();
-      if (!res.ok){
+      if (!res.ok) {
         setError(data.error ?? "login failed");
         return;
       }
@@ -124,6 +131,13 @@ function LoginForm({ onLogin }: { onLogin: (t: string) => void }) {
     } finally {
       setLoading(false);
     }
+  }
+
+  // Only the two things specific to a form submit: stop the page navigation, and pick
+  // which values to send.
+  async function handleSubmit(e: React.SubmitEvent) {
+    e.preventDefault();
+    await login(username, password);
   }
 
   return (
@@ -140,6 +154,13 @@ function LoginForm({ onLogin }: { onLogin: (t: string) => void }) {
           placeholder="password" />
         <button type="submit" disabled={loading}>
           {loading ? "logging in..." : "log in"}
+        </button>
+        <p className="muted">or try the demo — open two tabs, one as each:</p>
+        <button type="button" disabled={loading} onClick={() => login("alice", DEMO_PASSWORD)}>
+          log in as alice
+        </button>
+        <button type="button" disabled={loading} onClick={() => login("bob", DEMO_PASSWORD)}>
+          log in as bob
         </button>
         {error && <p style={{color: "#c00"}}>{error}</p>}
       </form>
