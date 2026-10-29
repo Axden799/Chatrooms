@@ -11,74 +11,64 @@ for scope.
 **Decided (2026-09-01):** 1:1 chat first, generalize to groups in a later slice ·
 lightweight auth (username → userId + token on the WS handshake), not a full login flow.
 
-**Repo state:** slice 3 complete. Slice 1 = WS → server timestamp → Mongo → echo.
-Slice 2 = identity read from the handshake query string (`?userId=`), so `senderId` comes
-from the connection and a client can no longer spoof it. Slice 3 = a `Map<string, WebSocket>`
-registry of connected users. Slice 4 = a `Chat` model with `participantIds`; membership
-gates both sending and receiving, so `chatId` is now meaningful. Slice 5 = a Redis Pub/Sub
-backplane: the message handler publishes instead of delivering, and a subscribe callback on
-every instance delivers to the participants it holds — so two instances can reach each
-other's clients. Slice 6 = an HTTP server owns the port and the
-WebSocket server attaches to it, so one port serves both protocols. Slice 7a = Express
-handles the HTTP side (routing + `express.json()` body parsing); `GET /health` returns
-`{"ok":true}` and Slice 7b = a `User` model
-(`username` unique + lowercased, `passwordHash`) and `POST /register`, which bcrypt-hashes
-the password at cost 10 and stores only the hash. Slice 7c = `POST /login`, which verifies
-with `bcrypt.compare` and returns a JWT signed with `JWT_SECRET` (7-day expiry); the same
-401 is returned for a wrong password and an unknown username so the endpoint cannot be used
-to enumerate accounts. Slice 8 = the WebSocket handshake takes `?token=` and verifies it
-with `jwt.verify`, so `?userId=` no longer works at all; `senderId` now comes from a signed
-claim rather than a client assertion. Slice 9 = the inbox: a note row per
-participant is written when a message is sent, torn up by whichever instance delivers it,
-and whatever remains is flushed to that user on their next connect — so offline delivery
-works, and works across instances because the inbox lives in Mongo rather than process
-memory. A 7-day TTL index sweeps notes nobody collected. `npm run seed` creates real
-accounts (alice, bob in a chat; carol outside it — all password `hunter2pw`). `npm run seed` creates a chat and prints ids for test tabs.
-Running Node 24. No remote yet.
+**Repo state: SHIPPED and deployed (2026-10-29).** Frontend
+https://chatrooms-mu.vercel.app · backend
+https://chatrooms-production-e166.up.railway.app · repo
+https://github.com/Axden799/Chatrooms. Vercel + Railway (app + Redis in ONE Railway
+project) + Mongo Atlas. Verified in production end to end: `wss://` through Railway's
+proxy, alice→bob in ~350ms, sender receives their own message back, inbox flush after a
+disconnect, participant check rejecting a non-member, rate-limit counters in Redis.
 
-**Slices are ONE concept each** — this was re-cut on 2026-09-30 after a first attempt at
-slice 2 bundled six concepts and had to be rolled back (parked at `84aa8f1` on
-`slice-2-routing`). Slice 10 = `GET /chats/:id/messages`, participant-gated,
-newest-first, capped limit; the token comes from an `Authorization: Bearer` header here
-(the WebSocket still uses the query string, since a browser cannot set WS headers), so
-token verification is split into `verifyToken` plus a reader per transport.
+Every slice is complete. In order: **1** WS → server timestamp → Mongo → echo · **2**
+identity from the handshake query string, so `senderId` cannot be spoofed · **3** a
+`Map<userId, WebSocket>` registry · **4** a `Chat` model with `participantIds` gating
+send and receive · **5** the Redis Pub/Sub backplane — publish instead of deliver, and a
+subscribe callback on every instance delivers to the participants it holds · **6** one
+HTTP server owns the port, `ws` attaches to it · **7a** Express + `express.json()` +
+`GET /health` · **7b** `User` model and `POST /register`, bcrypt cost 10 · **7c**
+`POST /login` returning a 7-day JWT, with an identical 401 for wrong password and unknown
+username so accounts cannot be enumerated · **8** the handshake verifies `?token=` with
+`jwt.verify`; `?userId=` no longer works · **9** the inbox — a note per participant
+written before the publish, torn up by whichever instance delivers, the remainder flushed
+on next connect, 7-day TTL · **10** `GET /chats/:id/messages`, participant-gated,
+newest-first, capped limit; `verifyToken` plus a reader per transport · **11-0**
+`GET /chats` + CORS allowlist · **11a–11i** the React frontend, one concept per slice
+(render model, `useState`, async handlers, `useEffect`, props and lifted state, cleanup
+and stale closures, `useRef`, sending, then rate limiting and demo logins) · **12** deploy
+and this documentation.
 
-Slice 11-0 = `GET /chats` (the chats you belong to) + CORS
-with an origin allowlist, so a browser frontend can reach the API at all.
+**Hard-won details worth not rediscovering:**
+- `CORS_ORIGINS` must have **no trailing slash**. A browser's `Origin` header never has
+  one, so `https://host/` silently matches nothing and blocks every response. Cost an hour.
+- `MONGO_URL` needs the database name before the `?` or Mongoose writes to `test`. The
+  seed script now prints the target database for exactly this reason.
+- `app.set("trust proxy", 1)` is required behind Railway, or every request looks like it
+  came from the proxy and all users share one rate-limit bucket. `1`, not `true` —
+  `true` reads the client-controlled leftmost `X-Forwarded-For` entry.
+- The rate limiter uses the **Redis** store, not the default in-memory one, because
+  in-process counters contradict the whole multi-instance premise.
+- Never set `NODE_ENV=production` on Railway: `npm ci` then skips devDependencies and
+  `npm run build` fails with `tsc: not found`.
+- Railway variables only take effect on a **new deployment**.
+- `npm run seed` refuses a non-localhost `MONGO_URL` without `-- --yes`; it opens with
+  three unguarded `deleteMany({})`.
 
-Slice 11a = the Vite/React frontend exists in `frontend/`
-(its own package.json, React 19 + Vite 8, `cd frontend && npm run dev` on :5173). Note
-`frontend/` has no `.nvmrc` of its own — `nvm use` walks up to the repo root — and Vite 8
-HARD FAILS on the Homebrew Node 21 with an ERR_INVALID_ARG_VALUE from inside rolldown, so
-`engines` was added to `frontend/package.json` to make that a clear npm warning instead.
+**Deliberately CUT from v1, each documented in README with what I'd do instead:** delivery
+ACKs, heartbeat ping/pong, presence/last-seen, token revocation, the WS-ticket fix for the
+token-in-URL problem, multi-device, consistent hashing + server registry, attachments,
+automated tests, a registration UI. Groups already work — a 3-participant chat fans out to
+all three with no code change; only a creation endpoint is missing. `Chat` has no `type`
+field on purpose, since 1:1 vs group is `participantIds.length`.
 
-Slice 11b = `useState` and controlled inputs; a LoginForm
-holding username/password in state, plus a Counter kept as a worked example of the render
-model.
+**Optional next, in rough order of value:** automated tests (Vitest + testcontainers, its
+own slice, never bundled into a feature slice) · delivery ACKs, which also give you
+delivery receipts · heartbeat, then presence on top of it · a chat-creation endpoint to
+make groups reachable from the UI · the AWS redeploy that `DESIGN.md` lists as the phase-2
+stretch and SAA prep.
 
-Slice 11c = the login form calls `POST /login` for real,
-with loading and error state. Note `import.meta.env` is a BUILD-time text substitution,
-not a runtime lookup (no `process` in a browser), so the API URL is baked into the bundle
-and changing it needs a rebuild — relevant for slice 12's deploy.
-
-Slice 11d = `useEffect` with a `[token]` dependency fetching
-`GET /chats`, rendered with `.map` + `key`. Deliberately placed inside LoginForm, which
-now does two unrelated jobs — 11e splits it, so the refactor is motivated by something
-visible rather than asserted.
-
-Slice 11e = split into App / LoginForm / ChatList /
-MessageList. App owns `token` and `selectedChatId`; data flows DOWN as props and events
-flow UP as callbacks (`onLogin`, `onSelect`). Clicking a chat loads its history.
-
-Remaining to SHIP: slice 11f (the WebSocket in React) and 11g — see the table in DESIGN.md; slice 12 = deploy to
-Railway/Vercel and rewrite the README as the architecture story. Deliberately CUT from v1: presence/last-seen,
-groups (a chat with 3+ participants already works — only a creation endpoint is missing),
-delivery receipts, heartbeat, deferred items 4 and 5. Then inbox
-(offline delivery), presence, groups. Slices 7-8 close the deferred items 1-2 and are the
-biggest real gap: today anyone who knows a userId can be that user, and userIds are
-public (they appear in every message's `senderId`). See also "Deferred work" in DESIGN.md. `Chat` has no `type` field on purpose — derivable from
-`participantIds.length`; add it when a group needs a name. Test tooling is its own slice, never bundled
-into a feature slice.
+**Slices are ONE concept each** — re-cut on 2026-09-30 after a first attempt at slice 2
+bundled six concepts and had to be rolled back (parked at `84aa8f1` on
+`slice-2-routing`). All 21 branches are pushed, so the history is browsable per concept.
 
 ## Project Purpose
 
@@ -129,7 +119,9 @@ npm run build        # compile to dist/
 docker compose up -d # Mongo + Redis (the app runs on the HOST, not in compose)
 ```
 
-No test runner yet — vitest/jest still TBD, to be decided when the first slice needs tests.
+**No test runner.** Every slice was verified by hand against a real stack, and the project
+shipped that way — see the cut list in `README.md`. If tests get added, Vitest plus
+testcontainers for Mongo and Redis, as its own slice, never bundled into a feature slice.
 
 Verify persistence directly (collection is `messages`, pluralized from the model name):
 

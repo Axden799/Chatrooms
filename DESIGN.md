@@ -53,8 +53,8 @@ His own framing, and it is the right one: a month of TypeScript on this backend 
 directly — types, async/await, .map, destructuring, arrow functions, fetch, callbacks
 registered for later. JSX is new syntax, but the *language* underneath is familiar.
 
-So slice 11 is split into eight small slices, each teaching one React concept and building
-one visible thing:
+So slice 11 was split into ten small slices, each teaching one React concept and building
+one visible thing. **All complete.**
 
 | | React concept | Output |
 |---|---|---|
@@ -65,10 +65,18 @@ one visible thing:
 | 11d | `useEffect` · dependency array · lists + keys | chats appear after login |
 | 11e | props · lifting state up | click a chat, see its messages |
 | 11f | `useEffect` **cleanup** · stale closures | messages arrive live |
-| 11g | callbacks down | send a message |
+| 11g | `useRef` · a value that survives render without causing one | one socket per login, not per chat |
+| 11h | callbacks down, data up | send a message |
+| 11i | *(backend + UI)* | rate limiting, demo logins |
 
-11f is the hard one — cleanup functions and stale closures are where React and WebSockets
-genuinely fight, and a good interview topic.
+11f was the hard one, as predicted — cleanup functions and stale closures are where React
+and WebSockets genuinely fight, and a good interview topic. 11g fell out of it: the socket
+had to move up to `App` so a compose form could reach it, which forced the chat filter out
+of the `onmessage` handler (where `selectedChatId` would be frozen) and into render, where
+props are always current.
+
+Slice 12 deployed it — Vercel + Railway + Atlas — and rewrote `README.md` as the
+architecture story. Live links are at the top of `CLAUDE.md`.
 
 **The big conceptual jump is the render model.** On the server a handler runs once per
 event. In React the component function runs again on every state change. Do not assume
