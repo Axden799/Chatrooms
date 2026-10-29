@@ -80,8 +80,39 @@ async function seed(): Promise<void> {
     participantIds: [alice!._id, bob!._id],
   });
 
+  /**
+   * A short exchange so the demo is legible the second someone opens it, instead of an
+   * empty box that gives no sign it works.
+   *
+   * Timestamps are backdated and spaced a minute apart so the ordering is visibly
+   * correct — MessageList sorts on serverTimestamp, and identical timestamps would
+   * leave the order up to insertion luck.
+   *
+   * Deliberately NO inbox notes. Those exist to record an undelivered message, and
+   * these were never sent to anyone. Writing them would make every message flush again
+   * on the first connect and show up twice.
+   */
+  const now = Date.now();
+  const script: Array<[typeof alice, string]> = [
+    [alice, "hey — did the pub/sub thing end up working across instances?"],
+    [bob, "yeah. publish to one channel, every instance delivers to whoever it holds"],
+    [bob, "no registry, nothing tracking who is where"],
+    [alice, "and if you're offline?"],
+    [bob, "inbox row per recipient, deleted by whichever instance delivers it"],
+    [alice, "nice. try closing this tab and sending me one"],
+  ];
+  await MessageModel.insertMany(
+    script.map(([sender, body], i) => ({
+      chatId: chat._id,
+      senderId: sender!._id,
+      body,
+      // oldest first, finishing a minute before now
+      serverTimestamp: new Date(now - (script.length - i) * 60_000),
+    })),
+  );
+
   console.log(`
-  Seeded three accounts. All passwords: ${PASSWORD}
+  Seeded three accounts and ${script.length} messages. All passwords: ${PASSWORD}
 
     alice   ${alice!._id.toString()}   IN the chat
     bob     ${bob!._id.toString()}   IN the chat
