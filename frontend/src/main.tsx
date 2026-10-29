@@ -7,7 +7,7 @@ import App from "./App.tsx";
  * The entry point. Three things happen here, once, when the page loads.
  *
  * 1. `document.getElementById("root")` finds the empty <div id="root"> in index.html.
- *    This is the same DOM API you used in client.html.
+ *    A plain DOM lookup, nothing React-specific.
  *
  * 2. `createRoot(...)` hands that div to React and says "you own this now".
  *

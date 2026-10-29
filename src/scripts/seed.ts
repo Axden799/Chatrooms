@@ -11,6 +11,15 @@
  * message would be rejected by the participant check.
  *
  * Re-running wipes users, chats and messages so the printed credentials are the live ones.
+ *
+ * Targeting a remote database needs no flag — dotenv does not override a variable that is
+ * already set, so a shell assignment wins:
+ *
+ *   MONGO_URL="mongodb+srv://..." npm run seed -- --yes
+ *
+ * The --yes is required for any host other than localhost, because the three deleteMany
+ * calls below are unguarded. Without it, one forgotten `export MONGO_URL` in a terminal
+ * silently destroys production data.
  */
 import mongoose from "mongoose";
 import bcrypt from "bcrypt";
@@ -21,7 +30,36 @@ import { MessageModel } from "../models/Message.js";
 
 const PASSWORD = "hunter2pw";
 
+/** Hostname and database name, for printing — never the credentials in the URL. */
+function describeTarget(mongoUrl: string): { host: string; database: string } {
+  const url = new URL(mongoUrl);
+  return {
+    host: url.hostname,
+    database: url.pathname.replace(/^\//, "") || "(default)",
+  };
+}
+
 async function seed(): Promise<void> {
+  const { host, database } = describeTarget(config.mongoUrl);
+  const isLocal = host === "localhost" || host === "127.0.0.1" || host === "::1";
+  const confirmed = process.argv.includes("--yes");
+
+  if (!isLocal && !confirmed) {
+    console.error(`
+  REFUSING TO SEED — this is not a local database.
+
+    host      ${host}
+    database  ${database}
+
+  Seeding DELETES every user, chat and message first. Re-run with --yes if that is
+  what you want:
+
+    npm run seed -- --yes
+`);
+    process.exit(1);
+  }
+
+  console.log(`[seed] wiping and seeding ${database} on ${host}`);
   await mongoose.connect(config.mongoUrl);
 
   await UserModel.deleteMany({});
@@ -51,8 +89,9 @@ async function seed(): Promise<void> {
 
   chatId    ${chat._id.toString()}
 
-  In public/client.html: Login as alice, Connect, paste the chatId, send.
-  Then a second tab as bob — the message crosses. A third as carol — rejected.
+  Open the frontend in two tabs, click "log in as alice" in one and "log in as bob"
+  in the other, pick the same chat, and type. carol exists to prove the participant
+  check rejects a non-member.
 `);
 
   await mongoose.disconnect();

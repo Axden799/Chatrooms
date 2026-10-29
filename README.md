@@ -31,7 +31,7 @@ cp .env.example .env
 
 ## Running
 
-Two terminals.
+Three terminals.
 
 **Terminal 1 — infrastructure** (Mongo + Redis in containers):
 
@@ -41,10 +41,11 @@ docker compose up -d          # start, detached
 docker compose ps             # confirm both are healthy
 ```
 
-**Terminal 2 — the app** (runs on the host, not in Docker, so reload is instant):
+**Terminal 2 — the backend** (runs on the host, not in Docker, so reload is instant):
 
 ```bash
-source ~/.nvm/nvm.sh
+source ~/.nvm/nvm.sh && nvm use
+npm run seed                  # creates alice, bob, carol — all password hunter2pw
 npm run dev                   # tsx watch — restarts on save
 ```
 
@@ -52,17 +53,24 @@ Expected output:
 
 ```
 [mongo] connected
+[redis] connected (pub + sub)
 [ws] listening on ws://localhost:8080
 ```
 
-**Then open the test client:**
+**Terminal 3 — the frontend:**
 
 ```bash
-open public/client.html
+cd frontend
+source ~/.nvm/nvm.sh && nvm use
+npm run dev                   # Vite on http://localhost:5173
 ```
 
-Type a message, hit Send. You should see a `sent` line, then a `recv` line coming back
-with an `_id` and a `serverTimestamp` the server added.
+`nvm use` is not optional here — Vite 8 hard-fails on the Homebrew Node 21 with an
+`ERR_INVALID_ARG_VALUE` from inside rolldown.
+
+Open two browser tabs on `localhost:5173`. Click **log in as alice** in one and **log in
+as bob** in the other, pick the same chat in both, and type. The message appears in both
+lists with no refresh.
 
 ## Verifying it actually persisted
 
@@ -84,9 +92,19 @@ PORT=8101 npm run dev     # terminal 1
 PORT=8102 npm run dev     # terminal 2
 ```
 
-Both should log `[redis] connected (pub + sub)`. Then open `public/client.html` in two
-tabs and set the **port** field differently — Alice on `8101`, Bob on `8102`, same chatId.
-A message from Alice reaches Bob even though they are on separate processes.
+Both should log `[redis] connected (pub + sub)`. Then run two frontends, each pointed at
+a different backend:
+
+```bash
+cd frontend
+VITE_API_URL=http://localhost:8101 npm run dev -- --port 5173
+VITE_API_URL=http://localhost:8102 npm run dev -- --port 5174
+```
+
+Log in as alice on `5173` and bob on `5174`, same chat. A message from alice reaches bob
+even though their sockets are held by separate processes — that is the Redis backplane
+doing its job. Neither instance knows where the other's clients are; they publish to a
+channel and every instance delivers to whoever it happens to hold.
 
 ## All commands
 
@@ -119,10 +137,14 @@ A message from Alice reaches Bob even though they are on separate processes.
 
 ```
 docker-compose.yml   Mongo + Redis only; the app runs on the host
-public/client.html   throwaway test harness — replaced by React later
 src/
 ├── config.ts        env read once, validated at boot
 ├── db.ts            Mongo connection lifecycle
+├── bus.ts           Redis pub/sub connections + the channel payload type
 ├── models/          one Mongoose schema per collection
-└── index.ts         entry point — WebSocket server
+├── scripts/seed.ts  creates alice, bob, carol and a chat
+└── index.ts         entry point — Express routes + WebSocket server
+frontend/
+├── src/App.tsx      the whole UI: LoginForm, ChatList, MessageList, Composer, App
+└── vite.config.ts
 ```
